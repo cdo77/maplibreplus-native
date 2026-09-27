@@ -25,9 +25,14 @@
 #include <mln/tile/tile.hpp>
 #include <mln/util/constants.hpp>
 #include <mln/util/convert.hpp>
+#include <mln/util/geo.hpp>
 #include <mln/util/projection.hpp>
+#include <mln/util/tile_coordinate.hpp>
 
 #include <algorithm>
+#include <optional>
+#include <utility>
+#include <vector>
 #include <cmath>
 #include <iterator>
 #include <limits>
@@ -40,7 +45,8 @@ using namespace shaders;
 namespace {
 
 constexpr int32_t terrainMeshSize = 128;
-constexpr uint16_t terrainTextureSize = util::tileSize_I * 2;
+// El tamano del "drape" (mapa 2D proyectado sobre la malla del terreno) se calcula
+// por tile en update(), segun el DPR del dispositivo y el overzoom del tile (ADR 0034).
 constexpr auto terrainShaderGroupName = "TerrainShader";
 
 int16_t clampToShort(double value) {
@@ -49,12 +55,6 @@ int16_t clampToShort(double value) {
 
 TerrainLayoutVertex terrainVertex(double x, double y, int16_t skirt) {
     return TerrainLayoutVertex{{{clampToShort(x), clampToShort(y), skirt}}};
-}
-
-mat4 demTileMatrix() {
-    mat4 matrix = matrix::identity4();
-    matrix::scale(matrix, matrix, 1.0 / util::EXTENT, 1.0 / util::EXTENT, 0.0);
-    return matrix;
 }
 
 } // namespace
@@ -161,6 +161,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                            gfx::Context& context,
                            const TransformState& state,
                            RenderSource* demSource,
+                           [[maybe_unused]] float pixelRatio,
                            UniqueChangeRequestVec& changes) {
     if (!options.valid() || !demSource) {
         teardown(changes);
@@ -194,64 +195,215 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
 
     auto* tileLayerGroup = static_cast<TileLayerGroup*>(layerGroup.get());
 
-    std::set<OverscaledTileID> visible;
-    for (const RenderTile& tile : *renderTiles) {
-        visible.insert(tile.getOverscaledTileID());
+    // El DEM (terrarium z15) no tiene relieve util a nivel de calle; a zoom profundo su "relieve" es
+    // ruido que descoloca la camara y la profundidad. Desvanecemos la exageracion al acercar:
+    // relieve pleno a escala urbana, casi plano a nivel de calle (queda como 2D, sin negro).
+    {
+        constexpr double kFadeStart = 19.0, kFadeEnd = 23.0;
+        exaggerationFade = static_cast<float>(
+            std::clamp((kFadeEnd - state.getZoom()) / (kFadeEnd - kFadeStart), 0.2, 1.0));
     }
-
-    tileLayerGroup->removeDrawablesIf([&](gfx::Drawable& drawable) {
-        return !drawable.getTileID() || !visible.contains(*drawable.getTileID());
-    });
-
-    for (auto it = renderTargets.begin(); it != renderTargets.end();) {
-        if (visible.contains(it->first)) {
-            ++it;
-        } else {
-            changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(it->second));
-            it = renderTargets.erase(it);
-        }
-    }
-
-    for (auto it = demByTile.begin(); it != demByTile.end();) {
-        it = visible.contains(it->first) ? std::next(it) : demByTile.erase(it);
-    }
-
-    const float exaggeration = options.getExaggeration();
+    const float exaggeration = options.getExaggeration() * exaggerationFade;
     const auto eleDelta = static_cast<float>(getSkirtLength(state.getZoom()));
 
-    minElevation = 0;
-    maxElevation = 0;
+    // --- MegaTexture con LOD por cercania (ADR 0034) ---
+    // Presupuesto de VRAM constante (kPageBudget paginas). El terreno se parte en sub-tiles y se
+    // les da prioridad por tamano en pantalla: las paginas van primero a lo grande/cercano; si un
+    // encuadre muy inclinado abarca mas superficie que el presupuesto, lo mas lejano (horizonte,
+    // chico en pantalla) no se dibuja, pero el campo cercano NUNCA queda sin pagina -> sin negro
+    // abajo ni freeze. Guiado por GLMegaTexture de ATAK.
+    constexpr size_t kPageBudget = 24;
+    constexpr uint32_t kPageSize = 1024;
+    constexpr int kMaxSubdiv = 5;
 
+    if (!pagesRegistered) {
+        pages.reserve(kPageBudget);
+        for (size_t i = 0; i < kPageBudget; ++i) {
+            auto page = std::make_shared<TileRenderTarget>(
+                context, Size{kPageSize, kPageSize}, gfx::TextureChannelDataType::UnsignedByte,
+                UnwrappedTileID{0, 0, 0});
+            page->setActive(false);
+            changes.emplace_back(std::make_unique<AddRenderTargetRequest>(page));
+            pages.push_back(std::move(page));
+        }
+        pagesRegistered = true;
+    }
+
+    mat4 projMatrix;
+    state.getProjMatrix(projMatrix);
+    const Size viewSize = state.getSize();
+
+    // Prioridad de una sub-celda: <=0 si no se ve; si se ve, cuanto mas grande en pantalla (mas
+    // cerca) mayor prioridad. Proyecta las 4 esquinas a nivel del mar con la matriz clip del
+    // padre; una celda que cruza el plano cercano es campo cercano -> prioridad maxima.
+    const auto cellPriority = [](const mat4& clip, double lx0, double ly0, double lx1, double ly1) -> double {
+        constexpr double kMargin = 1.25;
+        const double corners[4][2] = {{lx0, ly0}, {lx1, ly0}, {lx0, ly1}, {lx1, ly1}};
+        double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+        int behind = 0;
+        for (const auto& c : corners) {
+            vec4 out;
+            matrix::transformMat4(out, vec4{{c[0], c[1], 0.0, 1.0}}, clip);
+            if (out[3] <= 1e-6) {
+                ++behind;
+                continue;
+            }
+            const double nx = out[0] / out[3];
+            const double ny = out[1] / out[3];
+            minx = std::min(minx, nx);
+            maxx = std::max(maxx, nx);
+            miny = std::min(miny, ny);
+            maxy = std::max(maxy, ny);
+        }
+        if (behind == 4) {
+            return -1.0;
+        }
+        if (behind > 0) {
+            return 1e12;  // cruza el plano cercano: campo cercano, maxima prioridad
+        }
+        if (!(maxx >= -kMargin && minx <= kMargin && maxy >= -kMargin && miny <= kMargin)) {
+            return -1.0;  // fuera de la pantalla
+        }
+        return std::max(maxx - minx, maxy - miny);  // extension en pantalla ~ cercania
+    };
+
+    // Nivel de subdivision de un tile padre segun su tamano en pantalla (screen-space error).
+    const auto parentSubdiv = [&](const mat4& clip) -> int {
+        const double e = static_cast<double>(util::EXTENT);
+        const double corners[4][2] = {{0.0, 0.0}, {e, 0.0}, {0.0, e}, {e, e}};
+        double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
+        int behind = 0;
+        for (const auto& c : corners) {
+            vec4 out;
+            matrix::transformMat4(out, vec4{{c[0], c[1], 0.0, 1.0}}, clip);
+            if (out[3] <= 1e-6) {
+                ++behind;
+                continue;
+            }
+            minx = std::min(minx, out[0] / out[3]);
+            maxx = std::max(maxx, out[0] / out[3]);
+            miny = std::min(miny, out[1] / out[3]);
+            maxy = std::max(maxy, out[1] / out[3]);
+        }
+        if (behind > 0) {
+            return kMaxSubdiv;
+        }
+        const double px = std::max((maxx - minx) * 0.5 * viewSize.width, (maxy - miny) * 0.5 * viewSize.height);
+        constexpr double kTargetTilePx = 512.0;
+        if (px <= kTargetTilePx) {
+            return 0;
+        }
+        return std::clamp(static_cast<int>(std::lround(std::log2(px / kTargetTilePx))), 0, kMaxSubdiv);
+    };
+
+    struct SubTile {
+        OverscaledTileID id;
+        const RenderTile* parent;
+        float demScale;
+        float demOffsetX;
+        float demOffsetY;
+        double prio;
+    };
+    struct ParentInfo {
+        const RenderTile* tile;
+        mat4 clip;
+        int cz;
+        int natS;
+    };
+
+    std::vector<ParentInfo> parents;
+    std::set<OverscaledTileID> visibleParents;
     for (const RenderTile& tile : *renderTiles) {
-        const auto& tileID = tile.getOverscaledTileID();
-
+        const auto& pid = tile.getOverscaledTileID();
         const Tile& tileData = tile.getTile();
         if (!tileData.isRenderable()) {
             continue;
         }
-
         auto* bucket = static_cast<const RasterDEMTile&>(tileData).getBucket();
         if (!bucket || !bucket->hasData()) {
             continue;
         }
-
+        visibleParents.insert(pid);
         const DEMData& dem = bucket->getDEMData();
-        if (!demByTile.contains(tileID)) {
-            demByTile.emplace(tileID, std::make_shared<const DEMData>(dem));
+        if (!demByTile.contains(pid)) {
+            demByTile.emplace(pid, std::make_shared<const DEMData>(dem));
         }
+        mat4 model, clip;
+        state.matrixFor(model, pid.toUnwrapped());
+        matrix::multiply(clip, projMatrix, model);
+        parents.push_back(ParentInfo{&tile, clip, static_cast<int>(pid.canonical.z), parentSubdiv(clip)});
+    }
 
-        auto targetIt = renderTargets.find(tileID);
-        if (targetIt == renderTargets.end()) {
-            auto renderTarget = std::make_shared<TileRenderTarget>(context,
-                                                                     Size{terrainTextureSize, terrainTextureSize},
-                                                                     gfx::TextureChannelDataType::UnsignedByte,
-                                                                     tileID.toUnwrapped());
-            targetIt = renderTargets.emplace(tileID, std::move(renderTarget)).first;
-            changes.emplace_back(std::make_unique<AddRenderTargetRequest>(targetIt->second));
+    // Arma los sub-tiles visibles; baja un tope global de nivel hasta caber en el presupuesto.
+    std::vector<SubTile> subTiles;
+    for (int sCap = kMaxSubdiv; sCap >= 0; --sCap) {
+        subTiles.clear();
+        for (const ParentInfo& p : parents) {
+            const int s = std::min(p.natS, sCap);
+            const uint32_t n = 1u << s;
+            const auto& pid = p.tile->getOverscaledTileID();
+            const auto childZ = static_cast<uint8_t>(p.cz + s);
+            const int64_t baseX = static_cast<int64_t>(pid.canonical.x) * n;
+            const int64_t baseY = static_cast<int64_t>(pid.canonical.y) * n;
+            const float invN = 1.0f / static_cast<float>(n);
+            const double cell = static_cast<double>(util::EXTENT) / n;
+            for (uint32_t sy = 0; sy < n; ++sy) {
+                for (uint32_t sx = 0; sx < n; ++sx) {
+                    const double prio = cellPriority(p.clip, sx * cell, sy * cell, (sx + 1) * cell, (sy + 1) * cell);
+                    if (prio <= 0.0) {
+                        continue;
+                    }
+                    subTiles.push_back(SubTile{
+                        OverscaledTileID(childZ, pid.wrap, childZ,
+                                         static_cast<uint32_t>(baseX + sx), static_cast<uint32_t>(baseY + sy)),
+                        p.tile, invN, static_cast<float>(sx) * invN, static_cast<float>(sy) * invN, prio});
+                }
+            }
         }
+        if (subTiles.size() <= kPageBudget) {
+            break;
+        }
+    }
 
-        if (tileLayerGroup->getDrawableCount(RenderPass::Opaque, tileID) > 0) {
-            continue;
+    // Prioriza lo cercano: si sobrepasa el presupuesto, se descarta lo mas lejano (horizonte).
+    std::sort(subTiles.begin(), subTiles.end(),
+              [](const SubTile& a, const SubTile& b) { return a.prio > b.prio; });
+    if (subTiles.size() > kPageBudget) {
+        subTiles.erase(subTiles.begin() + static_cast<std::ptrdiff_t>(kPageBudget), subTiles.end());
+    }
+
+    // Libera cachés de padres que ya no se ven.
+    for (auto it = demTextures.begin(); it != demTextures.end();) {
+        it = visibleParents.contains(it->first) ? std::next(it) : demTextures.erase(it);
+    }
+    for (auto it = demByTile.begin(); it != demByTile.end();) {
+        it = visibleParents.contains(it->first) ? std::next(it) : demByTile.erase(it);
+    }
+
+    minElevation = 0;
+    maxElevation = 0;
+
+    // Reconstruye los drawables del terreno (pocos, <= presupuesto) asignando una pagina a cada
+    // sub-tile en orden de prioridad. Reusa texturas DEM cacheadas (no re-sube el DEM cada frame).
+    tileLayerGroup->clearDrawables();
+    for (size_t i = 0; i < subTiles.size(); ++i) {
+        const SubTile& st = subTiles[i];
+        auto& page = pages[i];
+        page->setTileID(st.id.toUnwrapped());
+        page->setActive(true);
+
+        const auto& parentId = st.parent->getOverscaledTileID();
+        auto* bucket = static_cast<const RasterDEMTile&>(st.parent->getTile()).getBucket();
+        const DEMData& dem = bucket->getDEMData();
+
+        auto demIt = demTextures.find(parentId);
+        if (demIt == demTextures.end()) {
+            auto demTexture = context.createTexture2D();
+            demTexture->setImage(dem.getImagePtr());
+            demTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                 .wrapU = gfx::TextureWrapType::Clamp,
+                                                 .wrapV = gfx::TextureWrapType::Clamp});
+            demIt = demTextures.emplace(parentId, std::move(demTexture)).first;
         }
 
         auto vertexAttrs = context.createVertexAttributeArray();
@@ -275,23 +427,21 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         builder->setRawVertices({}, sharedVertices->elements(), gfx::AttributeDataType::Short3);
         builder->setSegments(gfx::Triangles(), sharedIndices, segments.data(), segments.size());
 
-        builder->setTexture(targetIt->second->getTexture(), idTerrainImageTexture);
-
-        auto demTexture = context.createTexture2D();
-        demTexture->setImage(dem.getImagePtr());
-        demTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
-                                             .wrapU = gfx::TextureWrapType::Clamp,
-                                             .wrapV = gfx::TextureWrapType::Clamp});
-        builder->setTexture(demTexture, idTerrainDemTexture);
+        builder->setTexture(page->getTexture(), idTerrainImageTexture);
+        builder->setTexture(demIt->second, idTerrainDemTexture);
 
         builder->flush(context);
 
         for (auto& drawable : builder->clearDrawables()) {
-            drawable->setTileID(tileID);
+            drawable->setTileID(st.id);
             drawable->setData(std::make_unique<gfx::TerrainDrawableData>(
-                dem.dim, dem.getUnpackVector(), exaggeration, eleDelta));
-            tileLayerGroup->addDrawable(RenderPass::Opaque, tileID, std::move(drawable));
+                dem.dim, dem.getUnpackVector(), exaggeration, eleDelta,
+                st.demScale, st.demOffsetX, st.demOffsetY));
+            tileLayerGroup->addDrawable(RenderPass::Opaque, st.id, std::move(drawable));
         }
+    }
+    for (size_t i = subTiles.size(); i < pages.size(); ++i) {
+        pages[i]->setActive(false);
     }
 
     for (const auto& [tileID, demData] : demByTile) {
@@ -306,10 +456,12 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
 }
 
 void RenderTerrain::teardown(UniqueChangeRequestVec& changes) {
-    for (const auto& [tileID, renderTarget] : renderTargets) {
-        changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(renderTarget));
+    for (const auto& page : pages) {
+        changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(page));
     }
-    renderTargets.clear();
+    pages.clear();
+    demTextures.clear();
+    pagesRegistered = false;
     demByTile.clear();
 
     if (layerGroup) {
@@ -328,7 +480,10 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
         return;
     }
 
-    const mat4 terrainMatrix = demTileMatrix();
+    // Elevacion del centro de la vista: el terreno se dibuja relativo a ella para que la camara
+    // nunca quede por debajo del relieve al acercar (si no, a zoom profundo se veia todo negro).
+    const auto centerElevation = static_cast<float>(
+        getElevation(parameters.state.getLatLng(), parameters.state.getZoom())) * exaggerationFade;
 
     static_cast<TileLayerGroup*>(layerGroup.get())->visitDrawables([&](gfx::Drawable& drawable) {
         if (!drawable.getTileID() || !drawable.getData()) {
@@ -339,13 +494,20 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
         const auto matrix = LayerTweaker::getTileMatrix(
             tileID, parameters, {0.f, 0.f}, style::TranslateAnchorType::Map, false, false, drawable);
 
+        // Mapea la posicion local del sub-tile [0,EXTENT] a la ventana del DEM del padre.
+        mat4 terrainMatrix = matrix::identity4();
+        const double demA = static_cast<double>(data.demScale) / util::EXTENT;
+        matrix::scale(terrainMatrix, terrainMatrix, demA, demA, 0.0);
+        terrainMatrix[12] = data.demOffsetX;
+        terrainMatrix[13] = data.demOffsetY;
+
         const TerrainDrawableUBO drawableUBO = {.matrix = util::cast<float>(matrix),
                                                 .terrain_matrix = util::cast<float>(terrainMatrix),
                                                 .terrain_unpack = data.unpack,
                                                 .terrain_dim = static_cast<float>(data.dim),
                                                 .terrain_exaggeration = data.exaggeration,
                                                 .ele_delta = data.eleDelta,
-                                                .pad1 = 0};
+                                                .center_elevation = centerElevation};
 
         drawable.mutableUniformBuffers().createOrUpdate(idTerrainDrawableUBO, &drawableUBO, parameters.context);
     });

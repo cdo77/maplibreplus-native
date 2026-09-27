@@ -981,7 +981,7 @@ void RenderOrchestrator::updateTerrain(gfx::ShaderRegistry& shaders,
     terrain->setOptions(*options);
 
     RenderSource* demSource = getRenderSource(options->getSource());
-    terrain->update(shaders, context, state, demSource, changes);
+    terrain->update(shaders, context, state, demSource, updateParameters->pixelRatio, changes);
 }
 
 void RenderOrchestrator::updateGlobe(gfx::ShaderRegistry& shaders,

@@ -151,8 +151,10 @@ void TransformState::getProjMatrix(mat4& projMatrix, uint16_t nearZ, bool aligne
     assert(tanMultiple < 1);
     // Calculate z distance of the farthest fragment that should be rendered.
     const double furthestDistance = cameraToSeaLevelDistance / (1 - tanMultiple);
-    // Add a bit extra to avoid precision problems when a fragment's distance is exactly `furthestDistance`
-    const double farZ = furthestDistance * 1.01;
+    // Margen del plano lejano. 1% para evitar problemas de precision en el borde; ademas hasta 15%
+    // para incluir el relieve del terreno 3D (ADR 0034): sin esto, los puntos por debajo del nivel
+    // del mar de referencia quedan mas lejos que farZ y se recortan (agujeros negros en 2D+terreno).
+    const double farZ = furthestDistance * 1.15;
 
     // Make sure the camera state is up-to-date
     updateCameraState();

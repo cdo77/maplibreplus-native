@@ -44,6 +44,9 @@ mat4 TileRenderTarget::tileProjMatrix(const PaintParameters& parameters) const {
 void TileRenderTarget::render(RenderOrchestrator& orchestrator,
                               const RenderTree& renderTree,
                               PaintParameters& parameters) {
+    if (!active) {
+        return;
+    }
     const mat4 projMatrix = tileProjMatrix(parameters);
 
     parameters.renderPass = parameters.encoder->createRenderPass("tile render target",

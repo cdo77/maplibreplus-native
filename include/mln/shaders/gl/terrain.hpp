@@ -17,7 +17,7 @@ layout (std140) uniform TerrainDrawableUBO {
     highp float u_terrain_dim;
     highp float u_terrain_exaggeration;
     highp float u_ele_delta;
-    lowp float drawable_pad1;
+    highp float u_center_elevation;
 };
 
 uniform sampler2D u_terrain_dem;
@@ -45,7 +45,7 @@ void main() {
     float elevation = terrain_elevation(a_pos3d.xy);
     float ele_delta = a_pos3d.z == 1.0 ? u_ele_delta : 0.0;
     v_texture_pos = a_pos3d.xy / 8192.0;
-    gl_Position = u_matrix * vec4(a_pos3d.xy, elevation - ele_delta, 1.0);
+    gl_Position = u_matrix * vec4(a_pos3d.xy, elevation - u_center_elevation - ele_delta, 1.0);
 }
 )";
     static constexpr const char* fragment = R"(uniform sampler2D u_terrain_image;

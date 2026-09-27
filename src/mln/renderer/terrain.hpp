@@ -11,9 +11,12 @@
 #include <mln/style/terrain.hpp>
 #include <mln/tile/tile_id.hpp>
 
+#include <list>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace mln {
 
@@ -28,7 +31,9 @@ class Context;
 class ShaderRegistry;
 class ShaderProgramBase;
 class UploadPass;
+class Texture2D;
 using ShaderProgramBasePtr = std::shared_ptr<ShaderProgramBase>;
+using Texture2DPtr = std::shared_ptr<Texture2D>;
 } // namespace gfx
 
 using TerrainLayoutVertex = gfx::Vertex<TypeList<attributes::pos3d>>;
@@ -49,6 +54,7 @@ public:
                 gfx::Context&,
                 const TransformState&,
                 RenderSource* demSource,
+                float pixelRatio,
                 UniqueChangeRequestVec& changes);
 
     void teardown(UniqueChangeRequestVec& changes);
@@ -75,7 +81,13 @@ private:
     std::shared_ptr<TerrainIndexVector> sharedIndices;
     SegmentVector segments;
 
-    std::map<OverscaledTileID, TileRenderTargetPtr> renderTargets;
+    // MegaTexture (ADR 0034): pool fijo de paginas (render targets reusables) con presupuesto
+    // de VRAM constante y reuso, guiado por GLMegaTexture de ATAK. Reemplaza el esquema anterior
+    // de un render target por sub-tile, que crecia sin techo y colgaba el GPU al acercar.
+    std::vector<TileRenderTargetPtr> pages;                    // pool fijo de paginas (drape)
+    std::map<OverscaledTileID, gfx::Texture2DPtr> demTextures; // cache de texturas DEM por tile padre
+    bool pagesRegistered = false;
+    float exaggerationFade = 1.0f;  // desvanece el relieve a zoom profundo (ruido del DEM)
     std::map<OverscaledTileID, std::shared_ptr<const DEMData>> demByTile;
 
     double minElevation = 0;

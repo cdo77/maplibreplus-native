@@ -12,7 +12,7 @@ struct alignas(16) TerrainDrawableUBO {
     /* 144 */ float terrain_dim;
     /* 148 */ float terrain_exaggeration;
     /* 152 */ float ele_delta;
-    /* 156 */ float pad1;
+    /* 156 */ float center_elevation;
     /* 160 */
 };
 static_assert(sizeof(TerrainDrawableUBO) == 10 * 16);
