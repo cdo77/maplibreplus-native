@@ -13,7 +13,6 @@
 #include <mln/gfx/upload_pass.hpp>
 #include <mln/map/transform_state.hpp>
 #include <mln/renderer/buckets/hillshade_bucket.hpp>
-#include <mln/renderer/layer_tweaker.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/render_tile.hpp>
@@ -74,19 +73,10 @@ using namespace shaders;
 
 namespace {
 
-constexpr int32_t terrainMeshSize = 128;
-// El tamano del "drape" (mapa 2D proyectado sobre la malla del terreno) se calcula
-// por tile en update(), segun el DPR del dispositivo y el overzoom del tile (ADR 0034).
 constexpr auto terrainShaderGroupName = "TerrainShader";
 
 int16_t clampToShort(double value) {
     return static_cast<int16_t>(std::clamp(value, -32768.0, 32767.0));
-}
-
-TerrainLayoutVertex terrainVertex(double x, double y, int16_t skirt) {
-    // Malla compartida (modo planar mercator, de siempre): ecef_pos/ecef_normal en cero, el
-    // shader las ignora fuera del modo camara con altura real (ADR 0034).
-    return TerrainLayoutVertex{{{clampToShort(x), clampToShort(y), skirt}}, {{0.f, 0.f, 0.f}}, {{0.f, 0.f, 0.f}}};
 }
 
 // Recorre los vertices de una malla de meshSize x meshSize cuadros en el orden que esperan los
@@ -199,24 +189,13 @@ bool RenderTerrain::isRenderable() const {
     return options.valid() && layerGroup && !layerGroup->empty();
 }
 
-double RenderTerrain::getSkirtLength(double zoom) {
-    return 2.0 * M_PI * util::EARTH_RADIUS_M / std::pow(2.0, std::max(zoom, 0.0)) / 5.0;
-}
-
 void RenderTerrain::buildMesh() {
-    if (sharedVertices) {
+    if (ecefIndices) {
         return;
     }
 
-    sharedVertices = std::make_shared<TerrainVertexVector>();
-    forEachMeshVertex(terrainMeshSize, [&](double x, double y, int16_t skirt) {
-        sharedVertices->emplace_back(terrainVertex(x, y, skirt));
-    });
-    sharedIndices = buildMeshIndices(terrainMeshSize);
-    segments.clear();
-    segments.emplace_back(0, 0, sharedVertices->elements(), sharedIndices->elements());
-
-    // Malla de cada celda del terreno con camara de altura real (ADR 0039): 32x32 cuadros, como ATAK.
+    // Indices de la malla de cada celda (ADR 0039): 32x32 cuadros, como ATAK. Los vertices son propios de cada
+    // celda (buildEcefMesh), con la misma topologia.
     ecefIndices = buildMeshIndices(kEcefTerrainMeshSize);
     ecefSegments.clear();
     ecefSegments.emplace_back(0, 0, static_cast<std::size_t>(meshVertexCount(kEcefTerrainMeshSize)),
@@ -224,10 +203,9 @@ void RenderTerrain::buildMesh() {
 }
 
 std::shared_ptr<TerrainVertexVector> RenderTerrain::buildEcefMesh(const OverscaledTileID& id, vec3& originOut) const {
-    // Misma topologia y mismo orden de emision que buildMesh() (grid + skirts top/bottom +
-    // skirts left/right) para poder reusar sharedIndices sin cambios -- solo cambia la posicion
-    // de cada vertice: ECEF real (WGS84), relativa al centro geografico de ESTE sub-tile
-    // (RTE por-tile, ADR 0034), en vez de coordenadas tile-local mercator.
+    // Mismo orden de emision que espera buildMeshIndices (grid + skirts top/bottom + skirts left/right):
+    // posicion ECEF real (WGS84) de cada vertice, relativa al centro geografico de ESTE sub-tile (RTE
+    // por-tile, ADR 0034).
     const auto& canonical = id.canonical;
     const double tileScale = static_cast<double>(1ull << canonical.z);
 
@@ -265,7 +243,9 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                            RenderSource* demSource,
                            float pixelRatio,
                            UniqueChangeRequestVec& changes) {
-    if (!options.valid() || !demSource) {
+    // Motor 3D unico (ADR 0041): el terreno existe solo con la camara real orbital (ADR 0040). El terreno plano de
+    // MapLibre (MegaTexture por celda, ADR 0034) se retiro.
+    if (!options.valid() || !demSource || !state.isRealAltitudeModeEnabled()) {
         teardown(changes);
         return;
     }
@@ -297,53 +277,17 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
 
     auto* tileLayerGroup = static_cast<TileLayerGroup*>(layerGroup.get());
 
-    // El DEM (terrarium z15) no tiene relieve util a nivel de calle; a zoom profundo su "relieve" es
-    // ruido que descoloca la camara y la profundidad. Desvanecemos la exageracion al acercar:
-    // relieve pleno a escala urbana, casi plano a nivel de calle (queda como 2D, sin negro).
-    {
-        constexpr double kFadeStart = 19.0, kFadeEnd = 23.0;
-        exaggerationFade = static_cast<float>(
-            std::clamp((kFadeEnd - state.getZoom()) / (kFadeEnd - kFadeStart), 0.2, 1.0));
-    }
-    // Camara con altura real: relieve REAL (1x), sin la exageracion de estilo ni el
-    // desvanecimiento por zoom mercator -- la camara esta parada sobre el suelo a una altura real
-    // y el relieve tiene que medir lo que mide (ATAK no exagera a nivel de suelo). En campo, con
-    // la exageracion del estilo, las bardas se veian ~1.7x mas altas de lo real.
-    const bool ecefMode = state.isRealAltitudeModeEnabled();
-    const float exaggeration = ecefMode ? 1.0f : options.getExaggeration() * exaggerationFade;
-    // Skirt: 500 m en modo camara real (el de ATAK, ADR 0039); en planar, el de MapLibre por zoom.
-    const auto eleDelta = static_cast<float>(ecefMode ? kEcefTerrainSkirtM : getSkirtLength(state.getZoom()));
+    // Relieve real (1x) y skirts de 500 m, como ATAK (ADR 0039): la camara esta a una altura real sobre el
+    // suelo y el relieve tiene que medir lo que mide.
+    constexpr float exaggeration = 1.0f;
+    constexpr auto eleDelta = static_cast<float>(kEcefTerrainSkirtM);
 
-    // --- MegaTexture con LOD por cercania (ADR 0034), modo planar UNICAMENTE ---
-    // Presupuesto de VRAM (paginas). El terreno se parte en sub-tiles y se les da prioridad por
-    // cercania: las paginas van primero a lo grande/cercano; si un encuadre muy inclinado abarca
-    // mas superficie que el presupuesto, lo mas lejano (horizonte, chico en pantalla) no se
-    // dibuja, pero el campo cercano NUNCA queda sin pagina -> sin negro abajo ni freeze. Guiado
-    // por GLMegaTexture de ATAK. El modo camara con altura real (ECEF) ya NO usa este esquema --
-    // ver `drapes` mas abajo (ADR 0037).
-    constexpr size_t kPageBudgetPlanar = 24;
-    constexpr uint32_t kPageSize = 1024;
-    constexpr int kMaxSubdiv = 5;
-
-    if (!pagesRegistered) {
-        pages.reserve(kPageBudgetPlanar);
-        for (size_t i = 0; i < kPageBudgetPlanar; ++i) {
-            auto page = std::make_shared<TileRenderTarget>(
-                context, Size{kPageSize, kPageSize}, gfx::TextureChannelDataType::UnsignedByte,
-                UnwrappedTileID{0, 0, 0});
-            page->setActive(false);
-            changes.emplace_back(std::make_unique<AddRenderTargetRequest>(page));
-            pages.push_back(std::move(page));
-        }
-        pagesRegistered = true;
-    }
-
-    // --- Drapes multi-resolucion (ADR 0037), modo camara con altura real UNICAMENTE ---
+    // --- Drapes multi-resolucion (ADR 0037) ---
     // Los 3 render passes offscreen de ATAK (1x/4x/32x), tamanos fijos
     // TransformState::kEcefDrapeTextureSizesPx -- los mismos que usa el TransformState sintetico
     // de cada covering independiente (TilePyramid::update). El terreno -- cuantas celdas
-    // geometricas tenga -- proyecta su malla sobre estas texturas compartidas en vez de pedir
-    // una pagina propia por celda (ver el loop de drawables y updateUniforms).
+    // geometricas tenga -- proyecta su malla sobre estas texturas compartidas (ver el loop de
+    // drawables y updateUniforms).
     if (!drapesRegistered) {
         for (size_t i = 0; i < drapes.size(); ++i) {
             const uint32_t sizePx = TransformState::kEcefDrapeTextureSizesPx[i];
@@ -355,88 +299,16 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         drapesRegistered = true;
     }
 
-    mat4 projMatrix;
-    state.getProjMatrix(projMatrix);
     const Size viewSize = state.getSize();
 
-    // Drapes multi-resolucion (ADR 0037): se activan/reposicionan solo en modo ECEF, con las
-    // mismas areas que TransformState::computeEcefDrapeAreas() -- la MISMA cuenta que usa
-    // RenderOrchestrator::createRenderTree para el covering de tiles de cada drape, asi el area
-    // que captura cada render target coincide con el area para la que su covering trajo imagen.
-    // En modo planar quedan inactivos -- ese camino sigue con `pages` sin cambios.
-    for (const auto& drape : drapes) {
-        drape->setActive(ecefMode);
+    // Drapes multi-resolucion (ADR 0037), con las mismas areas que TransformState::computeEcefDrapeAreas() --
+    // la MISMA cuenta que usa RenderOrchestrator::createRenderTree para el covering de tiles de cada drape, asi
+    // el area que captura cada render target coincide con el area para la que su covering trajo imagen.
+    const auto drapeAreas = state.computeEcefDrapeAreas();
+    for (size_t i = 0; i < drapes.size(); ++i) {
+        drapes[i]->setActive(true);
+        drapes[i]->setGeographicArea({.center = drapeAreas[i].center, .radiusMeters = drapeAreas[i].radiusMeters});
     }
-    if (ecefMode) {
-        const auto drapeAreas = state.computeEcefDrapeAreas();
-        for (size_t i = 0; i < drapes.size(); ++i) {
-            drapes[i]->setGeographicArea({.center = drapeAreas[i].center, .radiusMeters = drapeAreas[i].radiusMeters});
-        }
-    }
-
-    // Proyecta un punto tile-local [0,EXTENT] (dentro del tile PADRE) a NDC -- solo para el modo
-    // planar de siempre (mercator).
-    using ProjectCornerFn = std::function<bool(double, double, double&, double&)>;
-
-    // Prioridad de una sub-celda (modo planar, mercator de siempre): <=0 si no se ve; si se ve,
-    // cuanto mas grande en pantalla (mas cerca) mayor prioridad. Una celda que cruza el plano
-    // cercano es campo cercano -> prioridad maxima.
-    const auto cellPriority = [](const ProjectCornerFn& project, double lx0, double ly0, double lx1,
-                                 double ly1) -> double {
-        constexpr double kMargin = 1.25;
-        const double corners[4][2] = {{lx0, ly0}, {lx1, ly0}, {lx0, ly1}, {lx1, ly1}};
-        double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
-        int behind = 0;
-        for (const auto& c : corners) {
-            double nx, ny;
-            if (!project(c[0], c[1], nx, ny)) {
-                ++behind;
-                continue;
-            }
-            minx = std::min(minx, nx);
-            maxx = std::max(maxx, nx);
-            miny = std::min(miny, ny);
-            maxy = std::max(maxy, ny);
-        }
-        if (behind == 4) {
-            return -1.0;
-        }
-        if (behind > 0) {
-            return 1e12;  // cruza el plano cercano: campo cercano, maxima prioridad
-        }
-        if (!(maxx >= -kMargin && minx <= kMargin && maxy >= -kMargin && miny <= kMargin)) {
-            return -1.0;  // fuera de la pantalla
-        }
-        return std::max(maxx - minx, maxy - miny);  // extension en pantalla ~ cercania
-    };
-
-    // Nivel de subdivision de un tile padre (modo planar) segun su tamano en pantalla.
-    const auto parentSubdiv = [&](const ProjectCornerFn& project) -> int {
-        const double e = static_cast<double>(util::EXTENT);
-        const double corners[4][2] = {{0.0, 0.0}, {e, 0.0}, {0.0, e}, {e, e}};
-        double minx = 1e30, miny = 1e30, maxx = -1e30, maxy = -1e30;
-        int behind = 0;
-        for (const auto& c : corners) {
-            double nx, ny;
-            if (!project(c[0], c[1], nx, ny)) {
-                ++behind;
-                continue;
-            }
-            minx = std::min(minx, nx);
-            maxx = std::max(maxx, nx);
-            miny = std::min(miny, ny);
-            maxy = std::max(maxy, ny);
-        }
-        if (behind > 0) {
-            return kMaxSubdiv;
-        }
-        const double px = std::max((maxx - minx) * 0.5 * viewSize.width, (maxy - miny) * 0.5 * viewSize.height);
-        constexpr double kTargetTilePx = 512.0;
-        if (px <= kTargetTilePx) {
-            return 0;
-        }
-        return std::clamp(static_cast<int>(std::lround(std::log2(px / kTargetTilePx))), 0, kMaxSubdiv);
-    };
 
     struct SubTile {
         OverscaledTileID id;
@@ -445,18 +317,11 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         float demOffsetX;
         float demOffsetY;
         double prio;
-        bool flat = false;  // modo ECEF: celda sin DEM, se dibuja plana (ADR 0039)
-    };
-    struct ParentInfo {
-        const RenderTile* tile;
-        ProjectCornerFn project;
-        int cz;
-        int natS;
+        bool flat = false;  // celda sin DEM, se dibuja plana (ADR 0039)
     };
 
-    std::vector<ParentInfo> parents;
     std::set<OverscaledTileID> visibleParents;
-    // Modo ECEF (ADR 0039): tiles DEM cargados con su rango de elevacion, para el LOD.
+    // Tiles DEM cargados con su rango de elevacion, para el LOD (ADR 0039).
     EcefDemIndex ecefDemIndex;
     std::map<EcefLodTileKey, const RenderTile*> ecefDemTiles;
     for (const RenderTile& tile : *renderTiles) {
@@ -475,40 +340,18 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
             demByTile.emplace(pid, std::make_shared<const DEMData>(dem));
         }
 
-        if (ecefMode) {
-            auto rangeIt = demRangeByTile.find(pid);
-            if (rangeIt == demRangeByTile.end()) {
-                rangeIt = demRangeByTile.emplace(pid, demRangeOf(dem)).first;
-            }
-            const EcefLodTileKey key{pid.canonical.z, pid.canonical.x, pid.canonical.y};
-            ecefDemIndex.emplace(key, rangeIt->second);
-            ecefDemTiles.emplace(key, &tile);
-            continue;
+        auto rangeIt = demRangeByTile.find(pid);
+        if (rangeIt == demRangeByTile.end()) {
+            rangeIt = demRangeByTile.emplace(pid, demRangeOf(dem)).first;
         }
-
-        ParentInfo info;
-        info.tile = &tile;
-        info.cz = static_cast<int>(pid.canonical.z);
-        mat4 model, clip;
-        state.matrixFor(model, pid.toUnwrapped());
-        matrix::multiply(clip, projMatrix, model);
-        info.project = [clip](double lx, double ly, double& nx, double& ny) -> bool {
-            vec4 out;
-            matrix::transformMat4(out, vec4{{lx, ly, 0.0, 1.0}}, clip);
-            if (out[3] <= 1e-6) {
-                return false;
-            }
-            nx = out[0] / out[3];
-            ny = out[1] / out[3];
-            return true;
-        };
-        info.natS = parentSubdiv(info.project);
-        parents.push_back(std::move(info));
+        const EcefLodTileKey key{pid.canonical.z, pid.canonical.x, pid.canonical.y};
+        ecefDemIndex.emplace(key, rangeIt->second);
+        ecefDemTiles.emplace(key, &tile);
     }
 
     // Arma los sub-tiles visibles.
     std::vector<SubTile> subTiles;
-    if (ecefMode) {
+    {
         // LOD de la malla como el servicio de terreno de ATAK (ADR 0039, terrain_ecef_lod.hpp): quadtree
         // global por error de pantalla, frustum y far; relieve derivado del DEM cargado mas fino.
         // Camara orbital (ADR 0040): foco sobre el relieve y colision del ojo contra el terreno bajo el ojo.
@@ -563,48 +406,11 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                     std::to_string(ecefCamera->collided) + " farM=" + std::to_string(ecefCamera->farM) +
                     (lod.fuseTripped ? " FUSIBLE: se corto el LOD" : ""));
         }
-    } else {
-        ecefCamera.reset();
-        // Camino planar de siempre: baja un tope global de nivel hasta caber en el presupuesto.
-        for (int sCap = kMaxSubdiv; sCap >= 0; --sCap) {
-            subTiles.clear();
-            for (const ParentInfo& p : parents) {
-                const int s = std::min(p.natS, sCap);
-                const uint32_t n = 1u << s;
-                const auto& pid = p.tile->getOverscaledTileID();
-                const auto childZ = static_cast<uint8_t>(p.cz + s);
-                const int64_t baseX = static_cast<int64_t>(pid.canonical.x) * n;
-                const int64_t baseY = static_cast<int64_t>(pid.canonical.y) * n;
-                const float invN = 1.0f / static_cast<float>(n);
-                const double cell = static_cast<double>(util::EXTENT) / n;
-                for (uint32_t sy = 0; sy < n; ++sy) {
-                    for (uint32_t sx = 0; sx < n; ++sx) {
-                        const double prio = cellPriority(p.project, sx * cell, sy * cell, (sx + 1) * cell,
-                                                         (sy + 1) * cell);
-                        if (prio <= 0.0) {
-                            continue;
-                        }
-                        subTiles.push_back(SubTile{
-                            OverscaledTileID(childZ, pid.wrap, childZ,
-                                             static_cast<uint32_t>(baseX + sx), static_cast<uint32_t>(baseY + sy)),
-                            p.tile, invN, static_cast<float>(sx) * invN, static_cast<float>(sy) * invN, prio});
-                    }
-                }
-            }
-            if (subTiles.size() <= kPageBudgetPlanar) {
-                break;
-            }
-        }
     }
 
-    // Ordena de lo cercano a lo lejano. En modo planar, si sobrepasa el tope de paginas
-    // (kPageBudgetPlanar) se descarta lo mas lejano; en modo ECEF no hay tope: el LOD ya acota las
-    // celdas como ATAK (ADR 0039).
+    // Ordena de lo cercano a lo lejano; sin tope: el LOD ya acota las celdas como ATAK (ADR 0039).
     std::sort(subTiles.begin(), subTiles.end(),
               [](const SubTile& a, const SubTile& b) { return a.prio > b.prio; });
-    if (!ecefMode && subTiles.size() > kPageBudgetPlanar) {
-        subTiles.erase(subTiles.begin() + static_cast<std::ptrdiff_t>(kPageBudgetPlanar), subTiles.end());
-    }
 
     // Libera cachés de padres que ya no se ven.
     for (auto it = demTextures.begin(); it != demTextures.end();) {
@@ -617,11 +423,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         it = visibleParents.contains(it->first) ? std::next(it) : demRangeByTile.erase(it);
     }
 
-    // Camara con altura real (ADR 0034): el terreno pasa a vivir en ECEF real (elipsoide WGS84,
-    // RTE por sub-tile) en vez de la proyeccion mercator plana de siempre. Interruptor apagado
-    // por defecto (invariante 9) -- con el modo apagado nada de este bloque cambia el
-    // comportamiento existente. `ecefMode` ya se calculo mas arriba, junto al armado de `project`.
-    if (ecefMode) {
+    // Libera las mallas ECEF de las celdas que ya no se ven.
+    {
         const std::set<OverscaledTileID> visibleSubTiles = [&] {
             std::set<OverscaledTileID> s;
             for (const SubTile& st : subTiles) s.insert(st.id);
@@ -633,27 +436,15 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         for (auto it = ecefOriginCache.begin(); it != ecefOriginCache.end();) {
             it = visibleSubTiles.contains(it->first) ? std::next(it) : ecefOriginCache.erase(it);
         }
-    } else if (!ecefVertexCache.empty()) {
-        ecefVertexCache.clear();
-        ecefOriginCache.clear();
     }
 
     minElevation = 0;
     maxElevation = 0;
 
-    // Reconstruye los drawables del terreno (pocos, <= presupuesto) en orden de prioridad. Reusa
-    // texturas DEM cacheadas (no re-sube el DEM cada frame). Modo planar: cada sub-tile se lleva
-    // su propia pagina (MegaTexture, ADR 0034). Modo ECEF: todos los sub-tiles comparten los
-    // mismos drapes (ADR 0037) -- no hay "pagina por indice" que asignar.
+    // Reconstruye los drawables del terreno en orden de cercania. Reusa texturas DEM cacheadas (no re-sube el
+    // DEM cada frame); todas las celdas comparten los mismos drapes (ADR 0037).
     tileLayerGroup->clearDrawables();
-    for (size_t i = 0; i < subTiles.size(); ++i) {
-        const SubTile& st = subTiles[i];
-        TileRenderTargetPtr page;
-        if (!ecefMode) {
-            page = pages[i];
-            page->setTileID(st.id.toUnwrapped());
-            page->setActive(true);
-        }
+    for (const SubTile& st : subTiles) {
 
         const auto& parentId = st.parent->getOverscaledTileID();
         auto* bucket = static_cast<const RasterDEMTile&>(st.parent->getTile()).getBucket();
@@ -669,21 +460,17 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
             demIt = demTextures.emplace(parentId, std::move(demTexture)).first;
         }
 
-        // Malla: compartida (planar, de siempre) o propia del sub-tile (ECEF real, cacheada por
-        // OverscaledTileID -- se recalcula solo la primera vez que aparece ese sub-tile).
-        std::shared_ptr<TerrainVertexVector> meshVertices = sharedVertices;
-        std::optional<vec3> ecefOrigin;
-        if (ecefMode) {
-            auto meshIt = ecefVertexCache.find(st.id);
-            if (meshIt == ecefVertexCache.end()) {
-                vec3 origin;
-                auto built = buildEcefMesh(st.id, origin);
-                meshIt = ecefVertexCache.emplace(st.id, std::move(built)).first;
-                ecefOriginCache.emplace(st.id, origin);
-            }
-            meshVertices = meshIt->second;
-            ecefOrigin = ecefOriginCache.at(st.id);
+        // Malla propia de la celda (ECEF real), cacheada por OverscaledTileID: se calcula solo la primera vez
+        // que aparece la celda.
+        auto meshIt = ecefVertexCache.find(st.id);
+        if (meshIt == ecefVertexCache.end()) {
+            vec3 origin;
+            auto built = buildEcefMesh(st.id, origin);
+            meshIt = ecefVertexCache.emplace(st.id, std::move(built)).first;
+            ecefOriginCache.emplace(st.id, origin);
         }
+        const std::shared_ptr<TerrainVertexVector> meshVertices = meshIt->second;
+        const std::optional<vec3> ecefOrigin = ecefOriginCache.at(st.id);
 
         auto vertexAttrs = context.createVertexAttributeArray();
         if (const auto& attr = vertexAttrs->set(idTerrainPosVertexAttribute)) {
@@ -718,21 +505,15 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         builder->setRenderPass(RenderPass::Opaque);
         builder->setVertexAttributes(std::move(vertexAttrs));
         builder->setRawVertices({}, meshVertices->elements(), gfx::AttributeDataType::Short3);
-        if (ecefMode) {
-            builder->setSegments(gfx::Triangles(), ecefIndices, ecefSegments.data(), ecefSegments.size());
-        } else {
-            builder->setSegments(gfx::Triangles(), sharedIndices, segments.data(), segments.size());
-        }
+        builder->setSegments(gfx::Triangles(), ecefIndices, ecefSegments.data(), ecefSegments.size());
 
-        // Drapes multi-resolucion (ADR 0037): en modo ECEF, TODOS los sub-tiles samplean los
-        // mismos render targets (drapes) en vez de una pagina propia -- los slots que un camino
-        // no usa igual se bindean (a la propia DEM, valida y ya subida) para no dejar unidades de
+        // Drapes multi-resolucion (ADR 0037): todas las celdas samplean los mismos render targets. El slot de la
+        // imagen plana (u_terrain_image, sin uso desde ADR 0041) se bindea a la DEM para no dejar una unidad de
         // textura sin asignar.
-        builder->setTexture(ecefMode ? demIt->second : page->getTexture(), idTerrainImageTexture);
+        builder->setTexture(demIt->second, idTerrainImageTexture);
         builder->setTexture(demIt->second, idTerrainDemTexture);
         for (size_t d = 0; d < drapes.size(); ++d) {
-            builder->setTexture(ecefMode ? drapes[d]->getTexture() : demIt->second,
-                                static_cast<size_t>(idTerrainDrape0Texture) + d);
+            builder->setTexture(drapes[d]->getTexture(), static_cast<size_t>(idTerrainDrape0Texture) + d);
         }
 
         builder->flush(context);
@@ -745,13 +526,6 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
             tileLayerGroup->addDrawable(RenderPass::Opaque, st.id, std::move(drawable));
         }
     }
-    // En modo ECEF ninguna pagina se usa este frame (drapes compartidos, ADR 0035) -- desactivar
-    // todas, no solo desde subTiles.size(), para no dejar paginas encendidas de un frame anterior
-    // en modo planar.
-    for (size_t i = ecefMode ? 0 : subTiles.size(); i < pages.size(); ++i) {
-        pages[i]->setActive(false);
-    }
-
     for (const auto& [tileID, demData] : demByTile) {
         for (int32_t y = 0; y < demData->dim; y += 8) {
             for (int32_t x = 0; x < demData->dim; x += 8) {
@@ -762,9 +536,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         }
     }
 
-    if (ecefMode) {
-        updateEcefHeightmap(context, state.computeEcefDrapeAreas().back());
-    }
+    updateEcefHeightmap(context, drapeAreas.back());
 }
 
 void RenderTerrain::updateEcefHeightmap(gfx::Context& context, const TransformState::EcefDrapeArea& area) {
@@ -844,10 +616,6 @@ void RenderTerrain::updateEcefHeightmap(gfx::Context& context, const TransformSt
 }
 
 void RenderTerrain::teardown(UniqueChangeRequestVec& changes) {
-    for (const auto& page : pages) {
-        changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(page));
-    }
-    pages.clear();
     for (auto& drape : drapes) {
         if (drape) {
             changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(drape));
@@ -858,10 +626,10 @@ void RenderTerrain::teardown(UniqueChangeRequestVec& changes) {
     ecefHeightmap.reset();
     ecefHeightmapDemKeys.clear();
     demTextures.clear();
-    pagesRegistered = false;
     demByTile.clear();
     ecefVertexCache.clear();
     ecefOriginCache.clear();
+    ecefCamera.reset();
 
     if (layerGroup) {
         layerGroup->clearDrawables();
@@ -879,30 +647,22 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
         return;
     }
 
-    // Elevacion del centro de la vista: el terreno se dibuja relativo a ella para que la camara
-    // nunca quede por debajo del relieve al acercar (si no, a zoom profundo se veia todo negro).
-    const double demElevationAtCenter = getElevation(parameters.state.getLatLng(), parameters.state.getZoom());
-    const auto centerElevation =
-        static_cast<float>(demElevationAtCenter * options.getExaggeration()) * exaggerationFade;
+    if (!ecefCamera) {
+        return;
+    }
 
     static_cast<TileLayerGroup*>(layerGroup.get())->visitDrawables([&](gfx::Drawable& drawable) {
         if (!drawable.getTileID() || !drawable.getData()) {
             return;
         }
         const auto& data = static_cast<const gfx::TerrainDrawableData&>(*drawable.getData());
+        if (!data.ecefOrigin) {
+            return;
+        }
         const UnwrappedTileID tileID = drawable.getTileID()->toUnwrapped();
-        // Camara con altura real (ADR 0034): matriz RTE en ECEF real en vez de la mercator de
-        // siempre -- se recalcula cada frame (la camara se mueve), pero sin tocar la malla. La camara
-        // es UNA para todas las celdas: el suelo bajo ella es el relieve real (1x), aun en celdas planas.
-        const auto matrix = (data.ecefOrigin && ecefCamera)
-                                ? parameters.state.getEcefTileMatrix(*data.ecefOrigin, *ecefCamera)
-                                : LayerTweaker::getTileMatrix(tileID,
-                                                              parameters,
-                                                              {0.f, 0.f},
-                                                              style::TranslateAnchorType::Map,
-                                                              false,
-                                                              false,
-                                                              drawable);
+        // Matriz RTE de la camara orbital (ADR 0040): se recalcula cada frame (la camara se mueve) sin tocar la
+        // malla. La camara es UNA para todas las celdas, aun las planas.
+        const auto matrix = parameters.state.getEcefTileMatrix(*data.ecefOrigin, *ecefCamera);
 
         // Mapea la posicion local del sub-tile [0,EXTENT] a la ventana del DEM del padre.
         mat4 terrainMatrix = matrix::identity4();
@@ -911,17 +671,13 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
         terrainMatrix[12] = data.demOffsetX;
         terrainMatrix[13] = data.demOffsetY;
 
-        // Drapes multi-resolucion (ADR 0037, solo en modo ECEF): tile-local [0,EXTENT] ->
-        // world-tile -> UV de cada drape. tile-local a world-tile es la MISMA transformacion que ya
-        // usa el motor para posicionar cualquier tile mercator (matrixFor).
+        // Drapes multi-resolucion (ADR 0037): tile-local [0,EXTENT] -> world-tile -> UV de cada drape.
+        // tile-local a world-tile es la MISMA transformacion que usa el motor para cualquier tile (matrixFor).
         std::array<mat4, TransformState::kEcefDrapeCount> drapeMatrices;
-        drapeMatrices.fill(matrix::identity4());
-        if (data.ecefOrigin) {
-            mat4 tileToWorld;
-            parameters.state.matrixFor(tileToWorld, tileID);
-            for (size_t i = 0; i < drapes.size(); ++i) {
-                matrix::multiply(drapeMatrices[i], drapes[i]->worldToUVMatrix(parameters), tileToWorld);
-            }
+        mat4 tileToWorld;
+        parameters.state.matrixFor(tileToWorld, tileID);
+        for (size_t i = 0; i < drapes.size(); ++i) {
+            matrix::multiply(drapeMatrices[i], drapes[i]->worldToUVMatrix(parameters), tileToWorld);
         }
 
         const TerrainDrawableUBO drawableUBO = {.matrix = util::cast<float>(matrix),
@@ -933,8 +689,8 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
                                                 .terrain_dim = static_cast<float>(data.dim),
                                                 .terrain_exaggeration = data.exaggeration,
                                                 .ele_delta = data.eleDelta,
-                                                .center_elevation = centerElevation,
-                                                .ecef_mode = data.ecefOrigin ? 1.0f : 0.0f,
+                                                .center_elevation = 0.0f,
+                                                .ecef_mode = 1.0f,
                                                 .pad0 = 0.0f,
                                                 .pad1 = 0.0f,
                                                 .pad2 = 0.0f};

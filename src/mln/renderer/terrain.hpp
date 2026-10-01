@@ -41,9 +41,8 @@ using ShaderProgramBasePtr = std::shared_ptr<ShaderProgramBase>;
 using Texture2DPtr = std::shared_ptr<Texture2D>;
 } // namespace gfx
 
-// pos3d: posicion tile-local [0,EXTENT] (muestreo del DEM, igual que antes). ecef_pos/ecef_normal:
-// posicion ECEF real (metros) relativa al origen del sub-tile + normal elipsoidal, usadas solo en
-// modo camara con altura real (ADR 0034); en modo planar quedan en (0,0,0) y el shader las ignora.
+// pos3d: posicion tile-local [0,EXTENT] (muestreo del DEM y UV de los drapes). ecef_pos/ecef_normal:
+// posicion ECEF real (metros) relativa al origen del sub-tile + normal elipsoidal (ADR 0034).
 using TerrainLayoutVertex = gfx::Vertex<TypeList<attributes::pos3d, attributes::ecef_pos, attributes::ecef_normal>>;
 using TerrainVertexVector = gfx::VertexVector<TerrainLayoutVertex>;
 using TerrainIndexVector = gfx::IndexVector<gfx::Triangles>;
@@ -75,13 +74,11 @@ public:
     double getMinElevation() const { return minElevation; }
     double getMaxElevation() const { return maxElevation; }
 
-    static double getSkirtLength(double zoom);
-
     // Mapa de alturas del area del drape 32x (ADR 0038): ancla los iconos 3D al relieve, uno por
     // punto (el getTerrainMeshElevation de ATAK). RGBA8 codificado terrarium, como la DEM.
     const gfx::Texture2DPtr& getEcefHeightmap() const { return ecefHeightmap; }
     // Camara orbital del frame (ADR 0040), armada en update() con el relieve cargado (foco y suelo bajo el
-    // ojo); nullopt fuera del modo camara real.
+    // ojo); nullopt sin terreno (el terreno existe solo con la camara real, ADR 0041).
     const std::optional<TransformState::EcefCamera>& getEcefCamera() const { return ecefCamera; }
     // x0, y0 y lado del area del mapa de alturas, en mercator normalizado [0,1].
     const std::array<double, 3>& getEcefHeightmapMercator() const { return ecefHeightmapMercator; }
@@ -100,25 +97,13 @@ private:
     gfx::ShaderProgramBasePtr shader;
     LayerGroupBasePtr layerGroup;
 
-    std::shared_ptr<TerrainVertexVector> sharedVertices;
-    std::shared_ptr<TerrainIndexVector> sharedIndices;
-    SegmentVector segments;
     // Indices de la malla ECEF de cada celda (32x32, ADR 0039); los vertices son propios de cada celda.
     std::shared_ptr<TerrainIndexVector> ecefIndices;
     SegmentVector ecefSegments;
 
-    // MegaTexture (ADR 0034), modo planar (mapa normal, sin camara real) UNICAMENTE: pool fijo de
-    // paginas (render targets reusables) con presupuesto de VRAM constante y reuso, guiado por
-    // GLMegaTexture de ATAK. En modo camara con altura real (ecef_mode) esto ya NO se usa -- ver
-    // drapeNear/drapeFar (ADR 0035): atar una pagina de textura a cada celda geometrica fallaba
-    // estructuralmente a nivel de calle (la geometria necesita cientos de celdas para cubrir el
-    // campo visual; no hay esa cantidad de paginas, y encima el source de imagery ya no tiene mas
-    // resolucion real que dar mas alla de su propio maxzoom -- confirmado en campo, ver bitacora).
-    std::vector<TileRenderTargetPtr> pages;                    // pool fijo de paginas (modo planar)
     std::map<OverscaledTileID, gfx::Texture2DPtr> demTextures; // cache de texturas DEM por tile padre
-    bool pagesRegistered = false;
 
-    // Drapes multi-resolucion (ADR 0037; modo camara con altura real UNICAMENTE): los 3 render
+    // Drapes multi-resolucion (ADR 0037): los 3 render
     // passes offscreen de ATAK (GLMapView2.cpp, 1x/4x/32x de la resolucion base, todos centrados
     // en el punto de mira -- ver TransformState::computeEcefDrapeAreas). Cada uno captura el mapa
     // base una vez por frame como vista nadir sintetica, con su propio covering de tiles
@@ -135,13 +120,12 @@ private:
     std::array<double, 3> ecefHeightmapMercator{};
     std::vector<OverscaledTileID> ecefHeightmapDemKeys;
 
-    float exaggerationFade = 1.0f;  // desvanece el relieve a zoom profundo (ruido del DEM)
     std::map<OverscaledTileID, std::shared_ptr<const DEMData>> demByTile;
     // Rango de elevacion por tile DEM (caja del LOD ECEF, ADR 0039); se calcula una vez por tile.
     std::map<OverscaledTileID, EcefDemRange> demRangeByTile;
     std::optional<TransformState::EcefCamera> ecefCamera;
 
-    // Cache de mallas ECEF por sub-tile (modo camara con altura real, ADR 0034). Indexado por
+    // Cache de mallas ECEF por sub-tile (ADR 0034). Indexado por
     // OverscaledTileID igual que demByTile/demTextures: se libera cuando el sub-tile deja de
     // verse, se recomputa solo si aparece uno nuevo (evita trigonometria en double cada frame).
     std::map<OverscaledTileID, std::shared_ptr<TerrainVertexVector>> ecefVertexCache;
