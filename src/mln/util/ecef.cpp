@@ -37,8 +37,17 @@ LatLng ecefToLatLng(const vec3& ecef, double* heightMetersOut) {
     const double z = ecef[2];
     const double lonRad = std::atan2(y, x);
 
-    // Bowring: arranca con una latitud geocentrica y refina hacia la geodesica.
     const double p = std::sqrt(x * x + y * y);
+    // Sobre el eje polar (p = 0) la iteracion divide 0/0 (en el centro de la Tierra daba NaN y tumbaba el render
+    // con la camara muy alejada, field-test 01-10): ahi la latitud es +-90 y la altura |z| - b.
+    if (p < 1e-9) {
+        if (heightMetersOut) {
+            *heightMetersOut = std::abs(z) - WGS84_SEMI_MINOR_M;
+        }
+        return LatLng{z >= 0.0 ? 90.0 : -90.0, rad2deg(lonRad)};
+    }
+
+    // Bowring: arranca con una latitud geocentrica y refina hacia la geodesica.
     double latRad = std::atan2(z, p * (1.0 - kEccentricitySquared));
     for (int i = 0; i < 5; i++) {
         const double sinLat = std::sin(latRad);

@@ -469,8 +469,14 @@ std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> Trans
         // y los tiles pedidos nunca terminan de llegar (confirmado en campo: z=15 y z=16
         // mezclados con el pitch casi constante).
         constexpr double kRadiusStepFactor = 1.4;
-        const double radiusMeters = std::pow(
-            kRadiusStepFactor, std::ceil(std::log(std::max(continuousRadiusM, 1.0)) / std::log(kRadiusStepFactor)));
+        // Tope fisico: un cuarto de meridiano (el hemisferio visible). Con la camara muy alejada el radio pasaba el
+        // de la Tierra, la grilla de cuantizacion (radio/8) mandaba el centro al centro de la Tierra y la latitud
+        // salia NaN en cada frame (render trabado, field-test 01-10).
+        constexpr double kMaxDrapeRadiusM = util::M2PI * util::EARTH_RADIUS_M / 4.0;
+        const double radiusMeters = std::min(
+            std::pow(kRadiusStepFactor,
+                     std::ceil(std::log(std::max(continuousRadiusM, 1.0)) / std::log(kRadiusStepFactor))),
+            kMaxDrapeRadiusM);
         const double gridStepM = radiusMeters / 8.0;
         const vec3 centerEcef = {std::round(focusEcef[0] / gridStepM) * gridStepM,
                                  std::round(focusEcef[1] / gridStepM) * gridStepM,

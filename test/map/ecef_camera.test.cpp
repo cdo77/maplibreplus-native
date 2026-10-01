@@ -97,6 +97,30 @@ TEST(EcefCamera, NadirViewKeepsTheBearing) {
     EXPECT_LT(std::abs(x / w), 0.01);
 }
 
+TEST(EcefCamera, DrapeAreasStayValidWhenZoomedOut) {
+    // Muy alejado el radio del drape superaba el de la Tierra, la cuantizacion mandaba el centro al centro de la
+    // Tierra y la latitud salia NaN en cada frame (render trabado, field-test 01-10).
+    for (const double zoom : {0.0, 1.0, 2.0, 3.0, 4.0}) {
+        for (const double pitch : {0.0, 60.0, 84.0}) {
+            const auto state = makeState(zoom, pitch, 328.0);
+            std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> areas{};
+            ASSERT_NO_THROW(areas = state.computeEcefDrapeAreas()) << "zoom " << zoom << " pitch " << pitch;
+            for (const auto& area : areas) {
+                EXPECT_TRUE(std::isfinite(area.center.latitude()));
+                EXPECT_LE(area.radiusMeters, 2.0 * kPi * 6378137.0 / 4.0 + 1.0);
+            }
+        }
+    }
+}
+
+TEST(EcefCamera, PolarAxisConvertsWithoutNaN) {
+    double height = 0.0;
+    const LatLng north = util::ecef::ecefToLatLng({0.0, 0.0, 7000000.0}, &height);
+    EXPECT_DOUBLE_EQ(north.latitude(), 90.0);
+    EXPECT_NEAR(height, 7000000.0 - util::ecef::WGS84_SEMI_MINOR_M, 1e-6);
+    EXPECT_NO_THROW(util::ecef::ecefToLatLng({0.0, 0.0, 0.0}));
+}
+
 TEST(EcefCamera, PlanesFollowTheEyeHeight) {
     const auto cam = makeState(16.0, 60.0, 0.0).computeEcefCamera(kFocusElevationM);
     EXPECT_NEAR(cam.nearM, cam.eyeAglM * 0.2, 1e-9);
