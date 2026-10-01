@@ -39,6 +39,13 @@ struct TileCoverParameters {
     double tileLodScale = 1;
     double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;
     TileLodMode tileLodMode = TileLodMode::Default;
+    // Camara con altura real (ADR 0034): en vez de cubrir lo que el frustum de pantalla ve (un
+    // mapa 2D con cierto FOV), trae todos los tiles dentro de un radio geografico real alrededor
+    // del centro, en 360 grados -- la camara puede mirar hacia cualquier bearing en cualquier
+    // momento, y el frustum de la vista mercator clasica no coincide con eso. Lo activa
+    // tile_pyramid.cpp solo para el source RasterDEM cuando el modo esta encendido; ningun otro
+    // source (vectorial, raster de imagen) cambia de comportamiento.
+    bool omnidirectional = false;
 };
 
 int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;

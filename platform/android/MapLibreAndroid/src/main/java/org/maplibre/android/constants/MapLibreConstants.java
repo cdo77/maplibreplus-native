@@ -146,12 +146,17 @@ public class MapLibreConstants {
   /**
    * The currently supported maximum pitch level.
    */
-  public static final float MAXIMUM_PITCH = 60.0f;
+  // Fork Sentrion: 89 (antes 60). Con 60, setMaxPitchPreference descartaba en silencio el tope de la
+  // vista al horizonte (ADR 0037) y la camara en primera persona quedaba mirando el piso. El core
+  // soporta hasta ~89.25 grados (maxMercatorHorizonAngle).
+  public static final float MAXIMUM_PITCH = 89.0f;
 
   /**
    * The currently supported maximum tilt value.
    */
-  public static final double MAXIMUM_TILT = 60;
+  // Fork Sentrion: 89 (antes 60), igual que MAXIMUM_PITCH. CameraPosition.Builder.tilt() y el gesto de
+  // inclinacion recortaban aca: la primera persona (entrada a 80, tope 84 como ATAK) quedaba en 60.
+  public static final double MAXIMUM_TILT = 89;
 
   /**
    * The currently supported minimum tilt value.

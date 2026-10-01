@@ -6,6 +6,7 @@
 #include <mln/util/camera.hpp>
 #include <mln/util/constants.hpp>
 #include <mln/util/geo.hpp>
+#include <mln/util/ecef.hpp>
 #include <mln/util/geometry.hpp>
 #include <mln/util/mat4.hpp>
 #include <mln/util/projection.hpp>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <array>
 #include <limits>
+#include <functional>
 #include <optional>
 
 namespace mln {
@@ -277,6 +279,73 @@ public:
     FreeCameraOptions getFreeCameraOptions() const;
     void setFreeCameraOptions(const FreeCameraOptions& options);
 
+    // Camara ECEF real (ADR 0034) como camara ORBITAL alrededor del foco, igual que ATAK (ADR 0040):
+    // getLatLng() es el FOCO (lo que se mira, sobre el terreno), el zoom da la DISTANCIA ojo-foco
+    // (getCameraToCenterDistance x metros/px: el range(gsd) de ATAK) y pitch/bearing son el tilt y el
+    // azimut (pitch 0 = nadir). Es la misma camara que la mercator de MapLibre -- en este modo el fov pasa a
+    // 45 grados, el de la perspectiva ECEF --, asi los gestos, la colocacion de simbolos y el seguimiento
+    // coinciden con lo dibujado. Apagada por defecto (invariante 9). `heightMetersAboveEllipsoid` queda para
+    // la herramienta de primera persona (C3); la navegacion orbital no lo usa.
+    void setRealAltitudeMode(bool enabled, double heightMetersAboveEllipsoid = 0.0);
+    bool isRealAltitudeModeEnabled() const { return realAltitudeEnabled; }
+    double getRealAltitudeMeters() const { return realAltitudeMeters; }
+
+    // Camara orbital de un frame (ADR 0040): foco, ojo y planos, en ECEF real (WGS84).
+    struct EcefCamera {
+        LatLng focus;
+        double focusElevationM = 0.0;
+        double rangeM = 0.0;   // distancia ojo-foco
+        vec3 focusEcef{};
+        vec3 eyeEcef{};
+        LatLng eyeLatLng;
+        double eyeAglM = 0.0;  // altura del ojo sobre el terreno bajo el ojo
+        vec3 forward{};        // direccion de vista (ojo -> foco), unitaria
+        double nearM = 0.0;
+        double farM = 0.0;
+        bool collided = false; // se subio el ojo para no quedar a menos de 10 m del terreno (AdjustCamera de ATAK)
+    };
+    // `focusElevationM`: terreno en el foco. `groundAt`: terreno en un punto, para el suelo bajo el ojo; sin
+    // el se toma la elevacion del foco (estimacion plana, suficiente para los coverings de tiles).
+    EcefCamera computeEcefCamera(double focusElevationM,
+                                 const std::function<double(const LatLng&)>& groundAt = {}) const;
+
+    // Direccion de vista (unitaria, ECEF) segun pitch/bearing en la base ENU del foco.
+    vec3 getCameraForwardEcef() const;
+
+    // FOV vertical de la camara con altura real: 45 grados, el de ATAK (MapSceneModel2, HVFOV = 22,5 de
+    // medio angulo). Independiente del fov del mapa mercator (36,87 por defecto en MapLibre).
+    static constexpr double kEcefFieldOfViewRad = 45.0 * 3.14159265358979323846 / 180.0;
+
+    // Drapes multi-resolucion del terreno 3D (ADR 0037, patron de GLMapView2.cpp de ATAK -- solo
+    // lectura, GPLv3, no copiado): kEcefDrapeCount capturas nadir de la imagen, todas centradas
+    // en el punto de mira, a 1x/4x/32x de una resolucion base. Base = la resolucion del view en
+    // el punto de mira (drawMapResolution = scene.gsd en ATAK) con piso en la resolucion nativa
+    // de la imagen (a 1,7 m sobre el suelo la del view es cientos de veces mas fina que z19: puro
+    // overzoom), por scaleAdj = 1 + 1.1*sin(tilt). Proporciones de textura 2048/1024/1024 = las
+    // regiones del atlas de ATAK (1/2, 1/4, 1/4 del ancho).
+    static constexpr size_t kEcefDrapeCount = 3;
+    static constexpr std::array<uint32_t, kEcefDrapeCount> kEcefDrapeTextureSizesPx = {2048, 1024, 1024};
+    static constexpr std::array<double, kEcefDrapeCount> kEcefDrapeResolutionMultipliers = {1.0, 4.0, 32.0};
+
+    struct EcefDrapeArea {
+        LatLng center;
+        double radiusMeters;
+    };
+    std::array<EcefDrapeArea, kEcefDrapeCount> computeEcefDrapeAreas() const;
+
+    // Vista nadir sintetica (pitch=0, bearing=0) centrada en `area`, con el zoom mercator que le
+    // da a `textureSizePx` la resolucion de area.radiusMeters. El covering de tiles normal
+    // (TilePyramid::update) aplicado a este estado trae la imagen real de la zona/resolucion que
+    // ese drape cubre, desacoplado del covering de la camara real.
+    static TransformState makeSyntheticDrapeState(const TransformState& base,
+                                                  const EcefDrapeArea& area,
+                                                  uint32_t textureSizePx);
+
+    // Matriz view-projection de la camara orbital `camera` para un sub-tile cuyo origen local es `originEcef`
+    // (ECEF real, WGS84). Toda la resta ojo-origen se hace en double (RTE, ADR 0034) y solo el resultado
+    // final (ya de magnitud chica, relativo al ojo) se convierte a float al armar el uniform buffer.
+    mat4 getEcefTileMatrix(const vec3& originEcef, const EcefCamera& orbit) const;
+
 private:
     bool rotatedNorth() const;
 
@@ -328,6 +397,10 @@ private:
 
     mutable double globeRadiusPixels = 0;
     mutable vec3 globeCameraPosition;
+
+    // Camara con altura real (ADR 0034, ver getEcefTileMatrix). Apagada por defecto.
+    bool realAltitudeEnabled = false;
+    double realAltitudeMeters = 0.0;
 
     EdgeInsets frustumOffset;
     EdgeInsets edgeInsets;

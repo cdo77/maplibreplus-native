@@ -456,6 +456,7 @@ const std::vector<AttributeInfo> SymbolIconShaderInfo::attributes = {
 };
 const std::vector<TextureInfo> SymbolIconShaderInfo::textures = {
     TextureInfo{"u_texture", idSymbolImageTexture},
+    TextureInfo{"u_ecef_heightmap", idSymbolEcefHeightmapTexture},
 };
 
 // Symbol SDF
@@ -481,6 +482,7 @@ const std::vector<AttributeInfo> SymbolSDFShaderInfo::attributes = {
 };
 const std::vector<TextureInfo> SymbolSDFShaderInfo::textures = {
     TextureInfo{"u_texture", idSymbolImageTexture},
+    TextureInfo{"u_ecef_heightmap", idSymbolEcefHeightmapTexture},
 };
 
 // Symbol Text & Icon
@@ -506,6 +508,7 @@ const std::vector<AttributeInfo> SymbolTextAndIconShaderInfo::attributes = {
 const std::vector<TextureInfo> SymbolTextAndIconShaderInfo::textures = {
     TextureInfo{"u_texture", idSymbolImageTexture},
     TextureInfo{"u_texture_icon", idSymbolImageIconTexture},
+    TextureInfo{"u_ecef_heightmap", idSymbolEcefHeightmapTexture},
 };
 
 // Globe
@@ -529,10 +532,15 @@ const std::vector<UniformBlockInfo> TerrainShaderInfo::uniformBlocks = {
 };
 const std::vector<AttributeInfo> TerrainShaderInfo::attributes = {
     AttributeInfo{"a_pos3d", idTerrainPosVertexAttribute},
+    AttributeInfo{"a_ecef_pos", idTerrainEcefPosVertexAttribute},
+    AttributeInfo{"a_ecef_normal", idTerrainEcefNormalVertexAttribute},
 };
 const std::vector<TextureInfo> TerrainShaderInfo::textures = {
     TextureInfo{"u_terrain_image", idTerrainImageTexture},
     TextureInfo{"u_terrain_dem", idTerrainDemTexture},
+    TextureInfo{"u_terrain_drape0", idTerrainDrape0Texture},
+    TextureInfo{"u_terrain_drape1", idTerrainDrape1Texture},
+    TextureInfo{"u_terrain_drape2", idTerrainDrape2Texture},
 };
 
 // Terrain Depth

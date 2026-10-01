@@ -110,11 +110,22 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     std::vector<OverscaledTileID> idealTiles;
     std::vector<OverscaledTileID> panTiles;
 
+    // Camara con altura real (ADR 0034): el terreno (relieve, RasterDEM) necesita tiles en 360
+    // grados alrededor de la posicion real para construir la malla 3D, no solo lo que el frustum
+    // de la vista mercator clasica ve -- la camara puede girar el bearing en cualquier momento.
+    // El source de imagery satelital (Raster) YA NO necesita este tratamiento (ADR 0036,
+    // sucesor del 0035): en vez de forzar al covering de la camara real a traer tiles en 360
+    // grados (que además no coincidian en resolucion/zona con lo que el drape realmente cubre,
+    // causando manchones), cada drape del terreno tiene su PROPIO covering independiente mas
+    // abajo, contra vistas nadir sinteticas -- ver drapeTransformStates (ADR 0037).
+    const bool ecefOmnidirectional =
+        type == SourceType::RasterDEM && parameters.transformState.isRealAltitudeModeEnabled();
     util::TileCoverParameters tileCoverParameters = {.transformState = parameters.transformState,
                                                      .tileLodMinRadius = parameters.tileLodMinRadius,
                                                      .tileLodScale = parameters.tileLodScale,
                                                      .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
-                                                     .tileLodMode = parameters.tileLodMode};
+                                                     .tileLodMode = parameters.tileLodMode,
+                                                     .omnidirectional = ecefOmnidirectional};
 
     if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
@@ -148,6 +159,54 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                   " tiles, only " + util::toString(idealTiles[0]) + " is taken in Tile mode.");
             idealTiles = {idealTiles[0]};
         }
+    }
+
+    // Drapes multi-resolucion del terreno 3D (ADR 0037): el covering de arriba solo conoce la
+    // camara real (inclinada, mirando para cualquier lado). Cada drape necesita imagen de OTRA
+    // zona/resolucion -- la que cubre su vista nadir sintetica (RenderOrchestrator::
+    // createRenderTree) -- asi que por cada uno se calcula un covering aparte contra ese estado
+    // (mercator normal: vista nadir con bearing=0) y se UNE (nunca reemplaza) a idealTiles, igual
+    // que cada render pass offscreen de ATAK calcula sus propios tiles de imagen.
+    if (type == SourceType::Raster && !parameters.drapeTransformStates.empty()) {
+        std::set<OverscaledTileID> existingIdeal(idealTiles.begin(), idealTiles.end());
+        for (const auto& drapeStatePtr : parameters.drapeTransformStates) {
+            const TransformState& drapeState = *drapeStatePtr;
+            const double drapeZoom = util::clamp<double>(drapeState.getZoom(), zoomRange.min, zoomRange.max);
+            const int32_t drapeIdealZoom =
+                std::min<int32_t>(zoomRange.max, util::coveringZoomLevel(drapeZoom, type, tileSize));
+
+            util::TileCoverParameters drapeCoverParameters = {.transformState = drapeState,
+                                                              .tileLodMinRadius = parameters.tileLodMinRadius,
+                                                              .tileLodScale = parameters.tileLodScale,
+                                                              .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
+                                                              .tileLodMode = parameters.tileLodMode,
+                                                              .omnidirectional = false};
+            const std::vector<OverscaledTileID> drapeTiles =
+                util::tileCover(drapeCoverParameters, drapeIdealZoom, zoomRange, drapeIdealZoom);
+
+            for (const auto& tileID : drapeTiles) {
+                if (existingIdeal.insert(tileID).second) {
+                    idealTiles.push_back(tileID);
+                }
+            }
+        }
+    }
+
+    // Iconos 3D con camara real (ADR 0038, 0040): los marcadores (fuentes GeoJSON) tienen que existir en toda el
+    // area que muestra el terreno y en tiles chicos cerca del ojo: el icono 3D se ubica con una afin plana por
+    // tile y, en un tile grande, la curvatura lo hunde bajo el terreno (z9 = 78 km de lado: cientos de metros,
+    // chevron invisible en el field-test del 30-09). Se REEMPLAZA su covering por el omnidireccional del DEM
+    // (resolucion por distancia al ojo: error de centimetros cerca y bajo un pixel lejos); reemplazar y no unir,
+    // para no duplicar iconos en tiles de distinto nivel.
+    if (type == SourceType::GeoJSON && parameters.transformState.isRealAltitudeModeEnabled()) {
+        util::TileCoverParameters omniParameters = {.transformState = parameters.transformState,
+                                                    .tileLodMinRadius = parameters.tileLodMinRadius,
+                                                    .tileLodScale = parameters.tileLodScale,
+                                                    .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
+                                                    .tileLodMode = parameters.tileLodMode,
+                                                    .omnidirectional = true};
+        idealTiles = util::tileCover(omniParameters, zoomRange.max, zoomRange, std::nullopt);
+        panTiles.clear();
     }
 
     // Stores a list of all the tiles that we're definitely going to retain.

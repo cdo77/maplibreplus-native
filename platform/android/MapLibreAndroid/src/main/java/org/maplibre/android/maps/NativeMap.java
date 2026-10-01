@@ -76,6 +76,12 @@ interface NativeMap {
 
   double getPitch();
 
+  // Camara con altura real (ADR 0034, arco Globo/ECEF). Interruptor apagado por defecto:
+  // no reemplaza setPitch/setZoom ni el resto de la camara estandar, que sigue funcionando igual.
+  void setRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid);
+
+  boolean isRealAltitudeModeEnabled();
+
   void setZoom(double zoom, @NonNull PointF focalPoint, long duration);
 
   double getZoom();

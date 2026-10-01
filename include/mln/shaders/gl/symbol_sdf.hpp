@@ -58,6 +58,12 @@ layout (std140) uniform SymbolDrawableUBO {
     highp float u_opacity_t;
     highp float u_halo_width_t;
     highp float u_halo_blur_t;
+    highp float u_ecef_heightmap_scale;
+    highp vec2 u_ecef_heightmap_offset;
+    highp float u_ecef_depth_b;
+    highp float u_ecef_stand_px;
+    lowp float ecef_pad2;
+    lowp float ecef_pad3;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -98,6 +104,29 @@ out lowp float halo_width;
 layout (location = 9) in lowp vec2 a_halo_blur;
 out lowp float halo_blur;
 #endif
+
+uniform sampler2D u_ecef_heightmap;
+
+// Iconos 3D con camara real (ADR 0038): elevacion del terreno bajo el ancla, del mapa de alturas de
+// RenderTerrain (terrarium RGBA8; bilineal a mano con texelFetch como la DEM del terreno -- filtrar
+// lineal los bytes codificados daria alturas falsas).
+float ecef_height_texel(ivec2 p, ivec2 hi) {
+    vec3 rgb = texelFetch(u_ecef_heightmap, clamp(p, ivec2(0), hi), 0).rgb * 255.0;
+    return rgb.r * 256.0 + rgb.g + rgb.b / 256.0 - 32768.0;
+}
+
+float ecef_anchor_elevation(vec2 anchor) {
+    ivec2 dim = textureSize(u_ecef_heightmap, 0);
+    vec2 coord = (anchor * u_ecef_heightmap_scale + u_ecef_heightmap_offset) * vec2(dim) - 0.5;
+    ivec2 c = ivec2(floor(coord));
+    vec2 f = fract(coord);
+    ivec2 hi = dim - 1;
+    float tl = ecef_height_texel(c, hi);
+    float tr = ecef_height_texel(c + ivec2(1, 0), hi);
+    float bl = ecef_height_texel(c + ivec2(0, 1), hi);
+    float br = ecef_height_texel(c + ivec2(1, 1), hi);
+    return mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+}
 
 void main() {
     highp vec4 u_fill_color = u_is_text_prop ? u_text_fill_color : u_icon_fill_color;
@@ -152,7 +181,9 @@ lowp float halo_blur = u_halo_blur;
         size = u_size;
     }
 
-    vec4 projectedPoint = u_matrix * vec4(a_pos, 0, 1);
+    bool ecef_mode = u_ecef_heightmap_scale > 0.0;
+    float anchor_elevation = ecef_mode ? ecef_anchor_elevation(a_pos) : 0.0;
+    vec4 projectedPoint = u_matrix * vec4(a_pos, anchor_elevation, 1);
     highp float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,
     // which makes labels in the distance smaller relative to viewport space.
@@ -168,7 +199,8 @@ lowp float halo_blur = u_halo_blur;
         0.0, // Prevents oversized near-field symbols in pitched/overzoomed tiles
         4.0);
 
-    if (!u_is_offset) {
+    // Camara real: tamano fijo en pixeles, como los sprites de ATAK.
+    if (!u_is_offset && !ecef_mode) {
         size *= perspective_ratio;
     }
 
@@ -179,7 +211,7 @@ lowp float halo_blur = u_halo_blur;
         // Point labels with 'rotation-alignment: map' are horizontal with respect to tile units
         // To figure out that angle in projected space, we draw a short horizontal line in tile
         // space, project it, and measure its angle in projected space.
-        vec4 offsetProjectedPoint = u_matrix * vec4(a_pos + vec2(1, 0), 0, 1);
+        vec4 offsetProjectedPoint = u_matrix * vec4(a_pos + vec2(1, 0), anchor_elevation, 1);
 
         vec2 a = projectedPoint.xy / projectedPoint.w;
         vec2 b = offsetProjectedPoint.xy / offsetProjectedPoint.w;
@@ -191,8 +223,29 @@ lowp float halo_blur = u_halo_blur;
     highp float angle_cos = cos(segment_angle + symbol_rotation);
     mat2 rotation_matrix = mat2(angle_cos, -1.0 * angle_sin, angle_sin, angle_cos);
 
-    vec4 projected_pos = u_label_plane_matrix * vec4(a_projected_pos.xy, 0.0, 1.0);
+    // Camara real: el ancla (con su elevacion) ya la proyecto u_matrix; la label plane pasa de
+    // NDC a pixeles.
+    vec4 projected_pos = ecef_mode
+        ? u_label_plane_matrix * vec4(projectedPoint.xy / projectedPoint.w, 0.0, 1.0)
+        : u_label_plane_matrix * vec4(a_projected_pos.xy, 0.0, 1.0);
+    // Camara real inclinada: el icono se para sobre el ancla (sube u_ecef_stand_px en pantalla), como ATAK.
+    if (ecef_mode) {
+        projected_pos.y -= u_ecef_stand_px * projected_pos.w;
+    }
     gl_Position = u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + rotation_matrix * (a_offset / 32.0 * fontScale + a_pxoffset), 0.0, 1.0);
+    if (ecef_mode) {
+        // Como los sprites de ATAK (BatchGeometryPoints.vert), el icono se adelanta hacia la camara su propio
+        // radio en metros -- radio en px x metros/px a esa distancia --, asi el relieve no lo tapa aunque el
+        // ancla quede unos metros bajo la malla. Escalar el punto por s alrededor del ojo deja x, y, w
+        // multiplicados por s y z = s (z - B) + B; s = 1 - radio/distancia = 1 - radio_px tan(fov/2) / (alto/2)
+        // (fov 45 de la camara real, alto/2 = -1/u_coord_matrix[1][1]). Detras de la camara (w <= 0): fuera.
+        float radius_px = length(a_offset / 32.0 * fontScale);
+        float half_height_px = -1.0 / u_coord_matrix[1][1];
+        float s = max(1.0 - radius_px * 0.41421356 / half_height_px, 0.05);
+        gl_Position.z = projectedPoint.w > 0.0
+            ? (s * (projectedPoint.z - u_ecef_depth_b) + u_ecef_depth_b) / (s * projectedPoint.w)
+            : 2.0;
+    }
     float gamma_scale = gl_Position.w;
 
     vec2 fade_opacity = unpack_opacity(a_fade_opacity);

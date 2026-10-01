@@ -92,6 +92,14 @@ public:
     LatLngBounds latLngBoundsForCamera(const CameraOptions&) const;
     LatLngBounds latLngBoundsForCameraUnwrapped(const CameraOptions&) const;
 
+    // Camara con altura real (AGL) en metros sobre el elipsoide WGS84 (ADR 0034, arco
+    // Globo/ECEF). Aditiva y apagada por defecto (invariante 9): no reemplaza jumpTo/easeTo ni el
+    // resto de esta API de camara, que sigue funcionando igual. Ver TransformState::
+    // getEcefTileMatrix para el detalle de por que hace falta un modo aparte.
+    void setRealAltitudeMode(bool enabled, double heightMetersAboveEllipsoid = 0.0);
+    bool isRealAltitudeModeEnabled() const;
+    double getRealAltitudeMeters() const;
+
     /// @name Bounds
     /// @{
 

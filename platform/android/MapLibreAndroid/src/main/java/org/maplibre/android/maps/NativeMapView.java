@@ -345,6 +345,22 @@ final class NativeMapView implements NativeMap {
   }
 
   @Override
+  public void setRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid) {
+    if (checkState("setRealAltitudeMode")) {
+      return;
+    }
+    nativeSetRealAltitudeMode(enabled, heightMetersAboveEllipsoid);
+  }
+
+  @Override
+  public boolean isRealAltitudeModeEnabled() {
+    if (checkState("isRealAltitudeModeEnabled")) {
+      return false;
+    }
+    return nativeIsRealAltitudeModeEnabled();
+  }
+
+  @Override
   public void setZoom(double zoom, @NonNull PointF focalPoint, long duration) {
     if (checkState("setZoom")) {
       return;
@@ -1504,6 +1520,12 @@ final class NativeMapView implements NativeMap {
 
   @Keep
   private native void nativeSetPitch(double pitch, long duration);
+
+  @Keep
+  private native void nativeSetRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid);
+
+  @Keep
+  private native boolean nativeIsRealAltitudeModeEnabled();
 
   @Keep
   private native void nativeSetZoom(double zoom, double cx, double cy, long duration);

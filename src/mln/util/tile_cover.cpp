@@ -271,12 +271,92 @@ std::vector<OverscaledTileID> globeTileCover(const TransformState& transformStat
     return result;
 }
 
+namespace {
+// Camara con altura real (ADR 0034): cobertura de tiles del DEM por RADIO GEOGRAFICO REAL
+// alrededor del centro, en 360 grados, en vez de por el frustum de la vista mercator clasica --
+// la camara puede girar el bearing en cualquier momento hacia una direccion que ese frustum no
+// anticipa (ver TileCoverParameters::omnidirectional).
+//
+// RESOLUCION VARIABLE por distancia real (mismo patron que ATAK usa en
+// ElMgrTerrainRenderService::radiusOfMaxLvlLodInTiles, y el mismo quadtree adaptativo por
+// distancia que ya usa el LOD del propio terreno en RenderTerrain::update) -- un z fijo para todo
+// el radio de 7km se probo en campo y mostraba, cerca de la camara, un solo texel de una imagen
+// satelital/DEM de 2.4km estirado sobre unos pocos metros de terreno real (la geometria del LOD
+// del terreno llegaba bien a esa escala, pero la textura que tenia disponible para pintarla no).
+// Aca cada tile candidato se subdivide mientras su propio tamano real siga siendo grande frente a
+// su propia distancia real al punto donde esta la camara, hasta kOmniMaxZoom -- da tiles chicos
+// (mas detalle de imagen) cerca y tiles grandes lejos, sin fijar una unica resolucion para todo
+// el radio.
+std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& transform, uint8_t requestedZoom) {
+    constexpr uint8_t kOmniMinZoom = 10; // ~39km de lado: de sobra para cubrir el radio real desde cualquier borde
+    constexpr uint8_t kOmniMaxZoom = 18; // ~150m de lado en el ecuador: buena textura a nivel de calle
+    constexpr double kSplitRatio = 1.2;  // subdivide mientras el tile sea > 1.2x su propia distancia real
+    const uint8_t maxZ = clamp<uint8_t>(requestedZoom, kOmniMinZoom, kOmniMaxZoom);
+
+    // Camara orbital (ADR 0040): alrededor del OJO hasta su far (estimacion plana, sin relieve).
+    const TransformState::EcefCamera camera = transform.computeEcefCamera(0.0);
+    const LatLng cameraLatLng = camera.eyeLatLng;
+    const double farM = camera.farM;
+    const double earthCircumferenceM = 2.0 * pi * util::EARTH_RADIUS_M;
+
+    std::vector<OverscaledTileID> result;
+    const std::function<void(uint8_t, int64_t, int64_t)> visit = [&](uint8_t z, int64_t x, int64_t y) {
+        const double numTiles = std::pow(2.0, z);
+        const auto tileCount = static_cast<int64_t>(numTiles);
+        if (y < 0 || y >= tileCount) {
+            return; // fuera del mundo en latitud (mercator no envuelve en Y)
+        }
+        const double tileSizeM = earthCircumferenceM / numTiles;
+        const TileCoordinate camAtZ = TileCoordinate::fromLatLng(z, cameraLatLng);
+        const double dx = (static_cast<double>(x) + 0.5) - camAtZ.p.x;
+        const double dy = (static_cast<double>(y) + 0.5) - camAtZ.p.y;
+        const double distM = std::sqrt((dx * dx) + (dy * dy)) * tileSizeM;
+        // Radio circunscrito del tile (mitad de su diagonal) como cota conservadora: si ni el
+        // punto mas cercano del tile entra en el far-plane real, se descarta sin seguir bajando.
+        if (distM - (tileSizeM * 0.71) > farM) {
+            return;
+        }
+        if (z < maxZ && tileSizeM > distM * kSplitRatio) {
+            for (int i = 0; i < 4; ++i) {
+                visit(static_cast<uint8_t>(z + 1), (x << 1) + (i % 2), (y << 1) + (i >> 1));
+            }
+            return;
+        }
+        // Wrap del mundo: x fuera de [0,tileCount) es otra copia del planeta en longitud, igual
+        // que las raices wrap=-3..3 del camino normal mas abajo en este archivo.
+        const int64_t wrap = x >= 0 ? x / tileCount : (x - tileCount + 1) / tileCount;
+        const auto wrappedX = static_cast<uint32_t>(x - wrap * tileCount);
+        result.emplace_back(z, static_cast<int16_t>(wrap), z, wrappedX, static_cast<uint32_t>(y));
+    };
+
+    // Arranca en un area 3x3 de tiles raiz (kOmniMinZoom) alrededor de la camara -- por si el
+    // punto real cae cerca de un borde, y a ese zoom cada tile ya mide decenas de km, de sobra
+    // para cubrir el radio real desde cualquiera de los 9 vecinos.
+    const double startNumTiles = std::pow(2.0, kOmniMinZoom);
+    const TileCoordinate camAtStart = TileCoordinate::fromLatLng(kOmniMinZoom, cameraLatLng);
+    const auto startX = static_cast<int64_t>(std::floor(camAtStart.p.x));
+    const auto startY = static_cast<int64_t>(std::floor(camAtStart.p.y));
+    for (int64_t oy = startY - 1; oy <= startY + 1; ++oy) {
+        if (oy < 0 || oy >= static_cast<int64_t>(startNumTiles)) {
+            continue;
+        }
+        for (int64_t ox = startX - 1; ox <= startX + 1; ++ox) {
+            visit(kOmniMinZoom, ox, oy);
+        }
+    }
+    return result;
+}
+} // namespace
+
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
                                         uint8_t z,
                                         const Range<uint8_t> zoomRange,
                                         const std::optional<uint8_t>& overscaledZ) {
     if (state.transformState.isGlobeRendering()) {
         return globeTileCover(state.transformState, z, zoomRange, overscaledZ.value_or(z));
+    }
+    if (state.omnidirectional) {
+        return omnidirectionalTileCover(state.transformState, z);
     }
 
     struct Node {

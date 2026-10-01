@@ -14,6 +14,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/map/map.test.cpp
     ${PROJECT_SOURCE_DIR}/test/map/prefetch.test.cpp
     ${PROJECT_SOURCE_DIR}/test/map/transform.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/map/ecef_camera.test.cpp
     ${PROJECT_SOURCE_DIR}/test/math/clamp.test.cpp
     ${PROJECT_SOURCE_DIR}/test/math/minmax.test.cpp
     ${PROJECT_SOURCE_DIR}/test/math/wrap.test.cpp
@@ -23,6 +24,7 @@ add_library(
     ${PROJECT_SOURCE_DIR}/test/renderer/pattern_atlas.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/renderable.test.cpp
     ${PROJECT_SOURCE_DIR}/test/renderer/shader_registry.test.cpp
+    ${PROJECT_SOURCE_DIR}/test/renderer/terrain_ecef_lod.test.cpp
     $<$<BOOL:${MLN_WITH_WEBGPU}>:${PROJECT_SOURCE_DIR}/test/renderer/wgsl_preprocessor.test.cpp>
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_loader.test.cpp
     ${PROJECT_SOURCE_DIR}/test/sprite/sprite_parser.test.cpp

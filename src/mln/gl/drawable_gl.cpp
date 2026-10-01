@@ -42,7 +42,13 @@ void DrawableGL::draw(PaintParameters& parameters) const {
         return;
     }
 
-    if (enableDepth) {
+    if (parameters.ecefSpritePass) {
+        // Iconos 3D con camara real (ADR 0038): el mismo rango de profundidad que la malla del terreno
+        // (3D), solo lectura -- se ocultan detras del relieve sin taparse entre si con las esquinas
+        // transparentes. El esquema 2D (una profundidad fija por subcapa) no es comparable con la malla.
+        context.setDepthMode(
+            gfx::DepthMode{gfx::DepthFunctionType::LessEqual, gfx::DepthMaskType::ReadOnly, {0.0, parameters.depthRangeSize}});
+    } else if (enableDepth) {
         context.setDepthMode(getIs3D() ? parameters.depthModeFor3D()
                                        : parameters.depthModeForSublayer(getSubLayerIndex(), getDepthType()));
     } else {
@@ -53,7 +59,10 @@ void DrawableGL::draw(PaintParameters& parameters) const {
     // context.setDepthMode({gfx::DepthFunctionType::Always, gfx::DepthMaskType::ReadOnly, {0,1}});
 
     // For 3D mode, stenciling is handled by the layer group
-    if (!is3D) {
+    if (parameters.ecefSpritePass) {
+        // El recorte por stencil es por tile mercator: no aplica a la camara real (ADR 0038).
+        context.setStencilMode(gfx::StencilMode::disabled());
+    } else if (!is3D) {
         context.setStencilMode(makeStencilMode(parameters));
     }
 

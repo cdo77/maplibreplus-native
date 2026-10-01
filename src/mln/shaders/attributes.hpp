@@ -25,6 +25,10 @@ MBGL_DEFINE_ATTRIBUTE(float, 2, shift);
 MBGL_DEFINE_ATTRIBUTE(uint16_t, 2, decimals_ed);
 MBGL_DEFINE_ATTRIBUTE(int16_t, 2, normal2d);
 MBGL_DEFINE_ATTRIBUTE(int16_t, 3, pos3d);
+// Posicion ECEF real (metros, relativa al origen local del sub-tile) y normal elipsoidal
+// en ese punto. Terreno geocentrico (ADR 0034, RTE por sub-tile al estilo ATAK).
+MBGL_DEFINE_ATTRIBUTE(float, 3, ecef_pos);
+MBGL_DEFINE_ATTRIBUTE(float, 3, ecef_normal);
 
 #if MLN_USE_SYMBOL_INSTANCING
 MBGL_DEFINE_ATTRIBUTE(uint16_t, 1, sorted_instance);

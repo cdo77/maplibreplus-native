@@ -311,6 +311,21 @@ LatLngBounds Map::latLngBoundsForCameraUnwrapped(const CameraOptions& camera) co
     return bounds;
 }
 
+// MARK: - Camara con altura real (ADR 0034, arco Globo/ECEF)
+
+void Map::setRealAltitudeMode(bool enabled, double heightMetersAboveEllipsoid) {
+    impl->transform.getMutableState().setRealAltitudeMode(enabled, heightMetersAboveEllipsoid);
+    impl->onUpdate();
+}
+
+bool Map::isRealAltitudeModeEnabled() const {
+    return impl->transform.getState().isRealAltitudeModeEnabled();
+}
+
+double Map::getRealAltitudeMeters() const {
+    return impl->transform.getState().getRealAltitudeMeters();
+}
+
 // MARK: - Bounds
 
 void Map::setBounds(const BoundOptions& options) {

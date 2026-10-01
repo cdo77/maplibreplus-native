@@ -276,6 +276,15 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // Update the debug layer groups
         orchestrator.updateDebugLayerGroups(renderTree, parameters);
 
+        // Camara con altura real (ADR 0038): datos del frame para los iconos 3D, que usa el tweaker de
+        // simbolos -- suelo bajo la camara (mismo valor que usa la malla, exageracion 1x) y mapa de
+        // alturas del terreno.
+        if (auto* terrain = orchestrator.getTerrain(); terrain && parameters.state.isRealAltitudeModeEnabled()) {
+            parameters.ecefCamera = terrain->getEcefCamera();
+            parameters.ecefHeightmap = terrain->getEcefHeightmap();
+            parameters.ecefHeightmapMercator = terrain->getEcefHeightmapMercator();
+        }
+
         // Tweakers are run in the upload pass so they can set up uniforms.
         parameters.currentLayer = 0;
         orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
@@ -466,6 +475,42 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         terrain->render(orchestrator, parameters);
     };
 
+    // Pase de sprites (ADR 0038, pass Sprites de ATAK): con la camara con altura real, los iconos
+    // (capas symbol) no van en los drapes -- se dibujan aca, despues del terreno, como billboards de
+    // tamano fijo anclados al relieve y con profundidad contra la malla (ver DrawableGL::draw).
+    const auto drawableEcefSpritePass = [&] {
+        if (!parameters.state.isRealAltitudeModeEnabled()) {
+            return;
+        }
+        const auto debugGroup(parameters.renderPass->createDebugGroup("drawables-ecef-sprites"));
+        parameters.pass = RenderPass::Translucent;
+        parameters.depthRangeSize = 1 - 3 * PaintParameters::numSublayers * PaintParameters::depthEpsilon;
+        parameters.ecefSpritePass = true;
+        parameters.currentLayer = 0;
+        size_t spriteGroups = 0;
+        size_t spriteDrawables = 0;
+        orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
+            if (orchestrator.layerGroupIsType(layerGroup, "symbol")) {
+                layerGroup.render(orchestrator, parameters);
+                ++spriteGroups;
+                spriteDrawables += layerGroup.getDrawableCount();
+            }
+            parameters.currentLayer++;
+        });
+        parameters.ecefSpritePass = false;
+
+        // DIAGNOSTICO TEMPORAL (ADR 0038, quitar tras el field-test).
+        static int diagCounter = 0;
+        if ((diagCounter++ % 30) == 0) {
+            Log::Warning(Event::General,
+                         "SPRITE-DIAG groups=" + std::to_string(spriteGroups) +
+                             " drawables=" + std::to_string(spriteDrawables) +
+                             " rangeM=" +
+                             (parameters.ecefCamera ? std::to_string(parameters.ecefCamera->rangeM) : std::string("-")) +
+                             " heightmap=" + std::to_string(parameters.ecefHeightmap ? 1 : 0));
+        }
+    };
+
     if (parameters.staticData.has3D) {
         common3DPass();
         drawable3DPass();
@@ -477,6 +522,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         drawableGlobePass();
     } else if (orchestrator.hasTerrain()) {
         drawableTerrainPass();
+        drawableEcefSpritePass();
     } else {
         drawableOpaquePass();
         drawableTranslucentPass();

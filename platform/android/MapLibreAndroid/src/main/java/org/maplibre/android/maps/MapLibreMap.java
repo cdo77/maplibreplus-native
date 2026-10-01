@@ -326,6 +326,26 @@ public final class MapLibreMap {
   }
 
   /**
+   * Camara con altura real (AGL) en metros sobre el elipsoide WGS84 (ADR 0034, arco Globo/ECEF).
+   * Aditivo y apagado por defecto: no reemplaza la camara estandar (zoom/tilt/bearing via
+   * CameraPosition), que sigue funcionando igual con este modo apagado.
+   *
+   * @param enabled activar el modo
+   * @param heightMetersAboveEllipsoid altura real de la camara sobre el elipsoide, en metros
+   */
+  public void setRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid) {
+    nativeMapView.setRealAltitudeMode(enabled, heightMetersAboveEllipsoid);
+  }
+
+  /**
+   * @return true si el modo de camara con altura real esta activo
+   * @see MapLibreMap#setRealAltitudeMode(boolean, double)
+   */
+  public boolean isRealAltitudeModeEnabled() {
+    return nativeMapView.isRealAltitudeModeEnabled();
+  }
+
+  /**
    * Set the tile pre-fetching zoom delta. Pre-fetching makes sure that a low-resolution
    * tile at the (current_zoom_level - delta) is rendered as soon as possible at the
    * expense of a little bandwidth.

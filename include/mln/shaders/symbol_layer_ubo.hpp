@@ -29,9 +29,21 @@ struct alignas(16) SymbolDrawableUBO {
     /* 248 */ float opacity_t;
     /* 252 */ float halo_width_t;
     /* 256 */ float halo_blur_t;
-    /* 260 */
+    // Iconos 3D con camara real (ADR 0038): tile-local -> UV del mapa de alturas del terreno, para
+    // anclar cada icono al relieve. Escala 0 = modo normal (sin anclaje). Ocupa el relleno que ya
+    // tenia el bloque: el tamano no cambia.
+    /* 260 */ float ecef_heightmap_scale;
+    /* 264 */ std::array<float, 2> ecef_heightmap_offset;
+    // Iconos 3D (ADR 0040): termino constante de la proyeccion de la camara real, B = 2fn/(n-f). Con el, el
+    // shader adelanta el icono hacia la camara su propio radio, como los sprites de ATAK.
+    /* 272 */ float ecef_depth_b;
+    // Iconos 3D parados sobre el ancla con la vista inclinada (ADR 0040): px que se suben en pantalla, como ATAK.
+    /* 276 */ float ecef_stand_px;
+    /* 280 */ float ecef_pad2;
+    /* 284 */ float ecef_pad3;
+    /* 288 */
 };
-static_assert(sizeof(SymbolDrawableUBO) == 17 * 16);
+static_assert(sizeof(SymbolDrawableUBO) == 18 * 16);
 
 struct alignas(16) SymbolTilePropsUBO {
     /*  0 */ /*bool*/ int is_text;

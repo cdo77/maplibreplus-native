@@ -371,6 +371,8 @@ enum {
 enum {
     idSymbolImageTexture,
     idSymbolImageIconTexture,
+    // Mapa de alturas del terreno para los iconos 3D con camara real (ADR 0038).
+    idSymbolEcefHeightmapTexture,
     symbolTextureCount
 };
 
@@ -382,6 +384,11 @@ enum {
 enum {
     idTerrainImageTexture,
     idTerrainDemTexture,
+    // Drapes multi-resolucion 1x/4x/32x (ADR 0037), solo en modo camara con altura real.
+    // Contiguos: RenderTerrain los indexa como idTerrainDrape0Texture + i.
+    idTerrainDrape0Texture,
+    idTerrainDrape1Texture,
+    idTerrainDrape2Texture,
     terrainTextureCount
 };
 
@@ -571,6 +578,8 @@ enum {
 
 enum {
     idTerrainPosVertexAttribute,
+    idTerrainEcefPosVertexAttribute,
+    idTerrainEcefNormalVertexAttribute,
     terrainVertexAttributeCount
 };
 

@@ -185,6 +185,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/globe.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain_ecef_lod.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain_ecef_lod.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/tile_render_target.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/tile_render_target.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/change_request.cpp
@@ -941,6 +943,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/util/color$<IF:$<BOOL:${MLN_USE_RUST}>,.rs.cpp,.cpp>
     ${PROJECT_SOURCE_DIR}/src/mln/util/constants.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/convert.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/util/ecef.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/error_sink.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/error_sink.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/util/event.cpp

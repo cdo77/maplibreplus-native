@@ -20,6 +20,7 @@
 #include <mln/renderer/query.hpp>
 #include <mln/renderer/image_manager.hpp>
 #include <mln/geometry/line_atlas.hpp>
+#include <mln/map/transform_state.hpp>
 #include <mln/style/source_impl.hpp>
 #include <mln/style/transition_options.hpp>
 #include <mln/text/glyph_manager.hpp>
@@ -186,6 +187,20 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     PropertyEvaluationParameters evaluationParameters{zoomHistory, updateParameters->timePoint, transitionDuration};
     evaluationParameters.zoomChanged = zoomChanged;
 
+    // Drapes multi-resolucion del terreno 3D (ADR 0037): un covering de tiles de imagen
+    // independiente por drape, calculado una vez por frame contra su vista nadir sintetica (no la
+    // camara real) -- ver TilePyramid::update, que los une (nunca reemplaza) al covering normal
+    // solo para SourceType::Raster.
+    std::vector<std::shared_ptr<const TransformState>> drapeTransformStates;
+    if (updateParameters->transformState.isRealAltitudeModeEnabled()) {
+        const auto areas = updateParameters->transformState.computeEcefDrapeAreas();
+        for (size_t i = 0; i < areas.size(); ++i) {
+            auto synthetic = std::make_shared<TransformState>(TransformState::makeSyntheticDrapeState(
+                updateParameters->transformState, areas[i], TransformState::kEcefDrapeTextureSizesPx[i]));
+            drapeTransformStates.push_back(std::move(synthetic));
+        }
+    }
+
     TileParameters tileParameters{.pixelRatio = updateParameters->pixelRatio,
                                   .debugOptions = updateParameters->debugOptions,
                                   .transformState = updateParameters->transformState,
@@ -201,7 +216,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                                   .tileLodPitchThreshold = updateParameters->tileLodPitchThreshold,
                                   .tileLodZoomShift = updateParameters->tileLodZoomShift,
                                   .tileLodMode = updateParameters->tileLodMode,
-                                  .dynamicTextureAtlas = dynamicTextureAtlas};
+                                  .dynamicTextureAtlas = dynamicTextureAtlas,
+                                  .drapeTransformStates = drapeTransformStates};
 
     glyphManager->setURL(updateParameters->glyphURL);
     glyphManager->setFontFaces(updateParameters->fontFaces);
@@ -800,6 +816,11 @@ void RenderOrchestrator::collectPlacedSymbolData(bool enable) {
 
 const std::vector<PlacedSymbolData>& RenderOrchestrator::getPlacedSymbolsData() const {
     return placementController.getPlacement()->getPlacedSymbolsData();
+}
+
+bool RenderOrchestrator::layerGroupIsType(const LayerGroupBase& layerGroup, std::string_view type) const {
+    const RenderLayer* layer = getRenderLayer(layerGroup.getName());
+    return layer && std::string_view(layer->baseImpl->getTypeInfo()->type) == type;
 }
 
 RenderLayer* RenderOrchestrator::getRenderLayer(const std::string& id) {

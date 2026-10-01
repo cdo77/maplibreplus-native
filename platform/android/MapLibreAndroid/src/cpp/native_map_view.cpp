@@ -512,6 +512,14 @@ void NativeMapView::setPitch(jni::JNIEnv&, jni::jdouble pitch, jni::jlong durati
     map->easeTo(mln::CameraOptions().withPitch(pitch), mln::AnimationOptions{mln::Milliseconds(duration)});
 }
 
+void NativeMapView::setRealAltitudeMode(jni::JNIEnv&, jni::jboolean enabled, jni::jdouble heightMeters) {
+    map->setRealAltitudeMode(enabled, heightMeters);
+}
+
+jni::jboolean NativeMapView::isRealAltitudeModeEnabled(jni::JNIEnv&) {
+    return map->isRealAltitudeModeEnabled();
+}
+
 void NativeMapView::setZoom(jni::JNIEnv&, jni::jdouble zoom, jni::jdouble x, jni::jdouble y, jni::jlong duration) {
     map->easeTo(mln::CameraOptions().withZoom(zoom).withAnchor(mln::ScreenCoordinate{x, y}),
                 mln::AnimationOptions{mln::Milliseconds(duration)});
@@ -1431,6 +1439,8 @@ void NativeMapView::registerNative(jni::JNIEnv& env) {
         METHOD(&NativeMapView::resetPosition, "nativeResetPosition"),
         METHOD(&NativeMapView::getPitch, "nativeGetPitch"),
         METHOD(&NativeMapView::setPitch, "nativeSetPitch"),
+        METHOD(&NativeMapView::setRealAltitudeMode, "nativeSetRealAltitudeMode"),
+        METHOD(&NativeMapView::isRealAltitudeModeEnabled, "nativeIsRealAltitudeModeEnabled"),
         METHOD(&NativeMapView::getZoom, "nativeGetZoom"),
         METHOD(&NativeMapView::setZoom, "nativeSetZoom"),
         METHOD(&NativeMapView::resetZoom, "nativeResetZoom"),

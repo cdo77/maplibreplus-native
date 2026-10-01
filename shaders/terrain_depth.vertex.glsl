@@ -3,11 +3,19 @@ layout (location = 0) in vec3 a_pos3d;
 layout (std140) uniform TerrainDepthDrawableUBO {
     highp mat4 u_matrix;
     highp mat4 u_terrain_matrix;
+    // sin uso aca: mismo struct C++ que TerrainDrawableUBO (ADR 0037)
+    highp mat4 u_drape_matrix0;
+    highp mat4 u_drape_matrix1;
+    highp mat4 u_drape_matrix2;
     highp vec4 u_terrain_unpack;
     highp float u_terrain_dim;
     highp float u_terrain_exaggeration;
     highp float u_ele_delta;
     lowp float drawable_pad1;
+    lowp float drawable_pad_ecef; // ver TerrainDrawableUBO (mismo struct C++, ADR 0034)
+    lowp float drawable_pad2;
+    lowp float drawable_pad3;
+    lowp float drawable_pad4;
 };
 
 uniform sampler2D u_terrain_dem;

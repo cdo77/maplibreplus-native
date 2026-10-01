@@ -360,6 +360,217 @@ void TransformState::setFreeCameraOptions(const FreeCameraOptions& options) {
     }
 }
 
+// MARK: - Camara con altura real (ADR 0034, arco Globo/ECEF)
+
+void TransformState::setRealAltitudeMode(bool enabled, double heightMetersAboveEllipsoid) {
+    if (realAltitudeEnabled != enabled || realAltitudeMeters != heightMetersAboveEllipsoid) {
+        realAltitudeEnabled = enabled;
+        realAltitudeMeters = heightMetersAboveEllipsoid;
+        // Camara orbital (ADR 0040): la mercator usa el mismo fov que la ECEF, asi son la misma camara.
+        setFieldOfView(enabled ? kEcefFieldOfViewRad : util::DEFAULT_FOV);
+        requestMatricesUpdate = true;
+    }
+}
+
+TransformState::EcefCamera TransformState::computeEcefCamera(
+    double focusElevationM, const std::function<double(const LatLng&)>& groundAt) const {
+    namespace globe = util::globe;
+    namespace ecef = util::ecef;
+    // Radio de colision de la camara de ATAK (GLGlobe): el ojo nunca queda a menos de 10 m del terreno.
+    constexpr double kCollideRadiusM = 10.0;
+
+    EcefCamera cam;
+    cam.focus = getLatLng();
+    cam.focusElevationM = focusElevationM;
+    cam.rangeM = getCameraToCenterDistance() * Projection::getMetersPerPixelAtLatitude(cam.focus.latitude(), getZoom());
+    cam.focusEcef = ecef::llaToEcef(cam.focus, focusElevationM);
+    cam.forward = getCameraForwardEcef();
+    cam.eyeEcef = globe::subtract(cam.focusEcef, globe::scale(cam.forward, cam.rangeM));
+    double eyeHeightM = 0.0;
+    cam.eyeLatLng = ecef::ecefToLatLng(cam.eyeEcef, &eyeHeightM);
+    const double groundM = groundAt ? groundAt(cam.eyeLatLng) : focusElevationM;
+    if (eyeHeightM - kCollideRadiusM < groundM) {
+        // AdjustCamera de ATAK: sube el ojo por encima del terreno conservando el foco; la vista pasa a ser
+        // ojo -> foco (equivale a bajar el tilt).
+        const double adjM = groundM + kCollideRadiusM - eyeHeightM;
+        cam.eyeEcef = globe::add(cam.eyeEcef, globe::scale(ecef::surfaceNormal(cam.eyeLatLng), adjM));
+        cam.forward = globe::normalize(globe::subtract(cam.focusEcef, cam.eyeEcef));
+        eyeHeightM += adjM;
+        cam.collided = true;
+    }
+    cam.eyeAglM = eyeHeightM - groundM;
+    // Planos como ATAK con la camara baja: near = 0,2 x AGL; far = horizonte fisico desde el ojo
+    // (3570 x raiz(AGL), con margen) mas la distancia al foco.
+    cam.nearM = std::max(0.05, cam.eyeAglM * 0.2);
+    cam.farM = std::max(3570.0 * std::sqrt(std::max(cam.eyeAglM, 2.0)) * 1.5 + cam.rangeM, 500.0);
+    return cam;
+}
+
+vec3 TransformState::getCameraForwardEcef() const {
+    namespace globe = util::globe;
+    namespace ecef = util::ecef;
+
+    const LatLng cameraLatLng = getLatLng();
+
+    // Base local Este-Norte-Arriba (ENU) en la posicion de la camara: "arriba" es el normal
+    // elipsoidal real (WGS84), este/norte perpendiculares entre si y al eje polar. Misma idea que
+    // el frame local que arma updateGlobeMatrices para orientar bearing/pitch sobre la esfera,
+    // pero aca en ECEF real, con RTE (relative-to-eye) en vez de escalar por globeRadiusPixels.
+    const vec3 up = ecef::surfaceNormal(cameraLatLng);
+    const vec3 polarAxis = {0.0, 0.0, 1.0};
+    const vec3 east = globe::normalize(globe::cross(polarAxis, up));
+    const vec3 north = globe::normalize(globe::cross(up, east));
+
+    // Direccion de vista segun bearing (0=norte, sentido horario, igual que getBearing()) y pitch
+    // (0=nadir mirando derecho al piso, 90=horizonte, misma convencion que getPitch()).
+    const double sinP = std::sin(pitch);
+    const double cosP = std::cos(pitch);
+    // `bearing` interno de MapLibre = -rumbo de brujula (Transform::easeTo: deg2rad(-camera.bearing)). Usarlo
+    // directo hacia girar la camara ECEF al reves que la mercator: gestos y dibujo invertidos (field-test 30-09).
+    const double compass = -bearing;
+    const double sinB = std::sin(compass);
+    const double cosB = std::cos(compass);
+    vec3 forward = globe::add(
+        globe::add(globe::scale(east, sinB * sinP), globe::scale(north, cosB * sinP)), globe::scale(up, -cosP));
+    return globe::normalize(forward);
+}
+
+std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> TransformState::computeEcefDrapeAreas()
+    const {
+    namespace globe = util::globe;
+    namespace ecef = util::ecef;
+
+    // Camara orbital (ADR 0040): el punto de mira ES el foco, a la distancia de la camara (estimacion plana).
+    const EcefCamera orbit = computeEcefCamera(0.0);
+    const double sinPitch = util::clamp<double>(std::sin(pitch), 0.0, 1.0);
+    const double latRad = util::deg2rad(getLatLng().latitude());
+    const double slantToFocusM = orbit.rangeM;
+
+    // Resolucion base: la del view en el punto de mira (drawMapResolution = scene.gsd en ATAK),
+    // con piso en la resolucion nativa de la imagen (z19) -- pedir mas fino es overzoom -- y el
+    // scaleAdj de ATAK para camara perspectiva (GLMapView2.cpp, rama activa).
+    constexpr double kImageryNativeZoom = 19.0;
+    const double viewGsdAtFocus =
+        slantToFocusM * 2.0 * std::tan(kEcefFieldOfViewRad / 2.0) / static_cast<double>(size.height);
+    const double nativeGsd = util::M2PI * util::EARTH_RADIUS_M * std::cos(latRad) /
+                             (256.0 * std::pow(2.0, kImageryNativeZoom));
+    const double scaleAdj = 1.0 + (sinPitch * 1.1);
+    const double baseGsd = std::max(viewGsdAtFocus, nativeGsd) * scaleAdj;
+
+    const vec3 focusEcef = orbit.focusEcef;
+
+    std::array<EcefDrapeArea, kEcefDrapeCount> areas{};
+    for (size_t i = 0; i < kEcefDrapeCount; ++i) {
+        const double continuousRadiusM =
+            0.5 * kEcefDrapeTextureSizesPx[i] * baseGsd * kEcefDrapeResolutionMultipliers[i];
+
+        // Radio y centro cuantizados (escalones geometricos 1.4x, grilla radio/8): sin esto el
+        // zoom y el area del covering sintetico cambian con cada variacion minima de pitch o GPS
+        // y los tiles pedidos nunca terminan de llegar (confirmado en campo: z=15 y z=16
+        // mezclados con el pitch casi constante).
+        constexpr double kRadiusStepFactor = 1.4;
+        const double radiusMeters = std::pow(
+            kRadiusStepFactor, std::ceil(std::log(std::max(continuousRadiusM, 1.0)) / std::log(kRadiusStepFactor)));
+        const double gridStepM = radiusMeters / 8.0;
+        const vec3 centerEcef = {std::round(focusEcef[0] / gridStepM) * gridStepM,
+                                 std::round(focusEcef[1] / gridStepM) * gridStepM,
+                                 std::round(focusEcef[2] / gridStepM) * gridStepM};
+        areas[i] = {.center = ecef::ecefToLatLng(centerEcef), .radiusMeters = radiusMeters};
+    }
+    return areas;
+}
+
+TransformState TransformState::makeSyntheticDrapeState(const TransformState& base,
+                                                       const EcefDrapeArea& area,
+                                                       uint32_t textureSizePx) {
+    // Copiar `base` y solo pisar posicion/zoom/pitch/bearing (dejando el resto heredado de la
+    // camara real) fue la causa real del manchon en campo: getCameraToCenterDistance() depende
+    // de `fov` (0.5*size.height/tan(fov/2)), y el fov de la camara ECEF real (con altura real
+    // activa) no tiene por que coincidir con el fov "de mapa 2D estandar" que la formula de zoom
+    // de abajo asume implicitamente (256px de tile a zoom 0 cubriendo toda la circunferencia,
+    // convencion mercator pura). El resultado: el frustum de PERSPECTIVA real que arma el
+    // tileCover normal (Frustum::fromInvProjMatrix) cubria un area geografica muy distinta al
+    // radio pedido -- confirmado en campo, drape con datos solo en una franja angosta. Fiel al
+    // patron de ATAK (createOffscreenSceneModel arma la escena offscreen desde cero con sus
+    // propios parametros, no copia la camara real y pisa 2-3 campos): se resetean tambien fov,
+    // roll, z (altura mercator de camara) y skew a un estado "limpio" y conocido, coherente con
+    // la formula de zoom de mas abajo.
+    TransformState synthetic = base;
+    synthetic.setRealAltitudeMode(false);
+    synthetic.setBearing(0.0);
+    synthetic.setPitch(0.0);
+    synthetic.setRoll(0.0);
+    synthetic.setFieldOfView(util::DEFAULT_FOV);
+    synthetic.setZ(0.0);
+    synthetic.setXSkew(0.0);
+    synthetic.setYSkew(1.0);
+    synthetic.setEdgeInsets(EdgeInsets());
+    synthetic.setFrustumOffset(EdgeInsets());
+    synthetic.setSize(Size{textureSizePx, textureSizePx});
+
+    // metros/pixel deseados -> zoom mercator equivalente (256px por tile en zoom 0, con el
+    // achicamiento por latitud que ya usa el resto del motor mercator).
+    const double metersPerPixel = (2.0 * area.radiusMeters) / static_cast<double>(textureSizePx);
+    const double metersPerPixelAtZoom0 = (util::M2PI * util::EARTH_RADIUS_M *
+                                          std::cos(util::deg2rad(area.center.latitude()))) /
+                                         256.0;
+    const double zoom = std::log2(std::max(metersPerPixelAtZoom0 / std::max(metersPerPixel, 1e-6), 1.0));
+
+    synthetic.setLatLngZoom(area.center, util::clamp<double>(zoom, base.getMinZoom(), base.getMaxZoom()));
+    return synthetic;
+}
+
+mat4 TransformState::getEcefTileMatrix(const vec3& originEcef, const EcefCamera& orbit) const {
+    namespace globe = util::globe;
+    namespace ecef = util::ecef;
+
+    // Orientacion en la base ENU del foco (la misma de getCameraForwardEcef y de la camara mercator).
+    const vec3 cameraOrigin = orbit.eyeEcef;
+    const vec3 up = ecef::surfaceNormal(orbit.focus);
+    const vec3 polarAxis = {0.0, 0.0, 1.0};
+    const vec3 east = globe::normalize(globe::cross(polarAxis, up));
+    const vec3 forward = orbit.forward;
+
+    // Base ortonormal de camara (OpenGL: X=derecha, Y=arriba de pantalla, Z hacia el espectador). La derecha sale
+    // del rumbo, como el azimut de la camara de ATAK -- no de forward x up, que al nadir (2D) se anula: ahi se caia en
+    // una derecha fija al este y la vista 2D ignoraba el rumbo (arrastre girado, field-test 01-10).
+    const vec3 north = globe::cross(up, east);
+    const double compass = -bearing; // bearing interno de MapLibre = -rumbo de brujula
+    const vec3 rightFromHeading =
+        globe::subtract(globe::scale(east, std::cos(compass)), globe::scale(north, std::sin(compass)));
+    const vec3 cameraUp = globe::normalize(globe::cross(rightFromHeading, forward));
+    const vec3 cameraRight = globe::normalize(globe::cross(forward, cameraUp));
+
+    // ECEF-relativo-a-camara -> espacio de camara. Column-major (glMatrix), fila0=cameraRight,
+    // fila1=cameraUp, fila2=-forward.
+    mat4 view = matrix::identity4();
+    view[0] = cameraRight[0];
+    view[1] = cameraUp[0];
+    view[2] = -forward[0];
+    view[4] = cameraRight[1];
+    view[5] = cameraUp[1];
+    view[6] = -forward[1];
+    view[8] = cameraRight[2];
+    view[9] = cameraUp[2];
+    view[10] = -forward[2];
+
+    // Todo lo anterior es orientacion pura (sin magnitud ECEF). La unica resta de vectores de
+    // magnitud ECEF completa (~6.378.000 m) pasa aca, en double, antes de bajar a una traslacion
+    // de a lo sumo unos cientos de km -> el resultado cabe en float32 sin jitter (RTE).
+    const vec3 delta = globe::subtract(originEcef, cameraOrigin);
+    mat4 translated;
+    matrix::translate(translated, view, delta[0], delta[1], delta[2]);
+
+    const double farZ = orbit.farM;
+    const double nearZ = orbit.nearM;
+    mat4 proj;
+    matrix::perspective(proj, kEcefFieldOfViewRad, static_cast<double>(size.width) / size.height, nearZ, farZ);
+
+    mat4 result;
+    matrix::multiply(result, proj, translated);
+    return result;
+}
+
 void TransformState::setProjection(const style::ProjectionDefinition& projection_) {
     if (projection != projection_) {
         projection = projection_;

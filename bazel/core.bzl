@@ -968,6 +968,8 @@ MLN_DRAWABLES_SOURCE = [
     "src/mln/renderer/globe.hpp",
     "src/mln/renderer/terrain.cpp",
     "src/mln/renderer/terrain.hpp",
+    "src/mln/renderer/terrain_ecef_lod.cpp",
+    "src/mln/renderer/terrain_ecef_lod.hpp",
     "src/mln/renderer/tile_render_target.cpp",
     "src/mln/renderer/tile_render_target.hpp",
     "src/mln/renderer/layers/background_layer_tweaker.cpp",

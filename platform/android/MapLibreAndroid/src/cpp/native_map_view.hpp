@@ -150,6 +150,11 @@ public:
 
     void setPitch(jni::JNIEnv&, jni::jdouble, jni::jlong);
 
+    // Camara con altura real (ADR 0034, arco Globo/ECEF). Ver Map::setRealAltitudeMode.
+    void setRealAltitudeMode(jni::JNIEnv&, jni::jboolean, jni::jdouble);
+
+    jni::jboolean isRealAltitudeModeEnabled(jni::JNIEnv&);
+
     void setZoom(jni::JNIEnv&, jni::jdouble, jni::jdouble, jni::jdouble, jni::jlong);
 
     jni::jdouble getZoom(jni::JNIEnv&);

@@ -20,6 +20,7 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -174,6 +175,14 @@ public:
 
     const ZoomHistory& getZoomHistory() const { return zoomHistory; }
 
+    RenderLayer* getRenderLayer(const std::string& id);
+    const RenderLayer* getRenderLayer(const std::string& id) const;
+
+    // Tipo de estilo ("background", "symbol", ...) de la capa de un layer group: los drapes del
+    // terreno y el pase de sprites separan capas por tipo (ADR 0037/0038), como los render passes
+    // de ATAK.
+    bool layerGroupIsType(const LayerGroupBase&, std::string_view type) const;
+
 private:
     bool isLoaded() const;
     bool hasTransitions(TimePoint) const;
@@ -187,9 +196,6 @@ private:
                        UniqueChangeRequestVec& changes);
 
     void updateGlobe(gfx::ShaderRegistry&, gfx::Context&, const TransformState&, UniqueChangeRequestVec& changes);
-
-    RenderLayer* getRenderLayer(const std::string& id);
-    const RenderLayer* getRenderLayer(const std::string& id) const;
 
     void queryRenderedSymbols(std::unordered_map<std::string, std::vector<Feature>>& resultsByLayer,
                               const ScreenLineString& geometry,

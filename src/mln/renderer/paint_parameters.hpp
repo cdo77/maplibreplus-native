@@ -15,6 +15,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -34,6 +35,7 @@ class RendererBackend;
 class CommandEncoder;
 class RenderPass;
 class ShaderRegistry;
+class Texture2D;
 } // namespace gfx
 
 class TransformParameters {
@@ -98,6 +100,13 @@ public:
     mat4 matrixForTile(const UnwrappedTileID&, bool aligned = false) const;
 
     const mat4* projMatrixOverride = nullptr;
+
+    // Camara con altura real (ADR 0038): pase de sprites (iconos 3D despues del terreno) y los datos
+    // del frame que lo alimentan -- camara orbital (ADR 0040) y mapa de alturas del terreno.
+    bool ecefSpritePass = false;
+    std::optional<TransformState::EcefCamera> ecefCamera;
+    std::shared_ptr<gfx::Texture2D> ecefHeightmap;
+    std::array<double, 3> ecefHeightmapMercator{}; // x0, y0, lado (mercator normalizado [0,1])
 
     // Stencil handling
 public:
