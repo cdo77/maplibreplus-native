@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <tuple>
@@ -50,6 +51,9 @@ struct EcefLodCamera {
     vec3 originEcef{};      // posicion real del ojo: suelo + altura sobre el suelo
     double mercatorX = 0.0; // posicion de la camara en mercator normalizado [0,1)
     double mercatorY = 0.0;
+    // Foco de la camara en mercator X (centro de los drapes). Cada celda se entrega en la copia del mundo
+    // mas cercana a el, para que su UV caiga dentro de los drapes. NaN = usar mercatorX.
+    double focusMercatorX = std::numeric_limits<double>::quiet_NaN();
     double farM = 0.0;      // far plane real (horizonte fisico)
     double lambda = 0.0;    // (alto de pantalla en px fisicos / 2) / tan(fov / 2)
     mat4 viewProjRte{};     // clip = viewProjRte * (p - originEcef, 1)
@@ -57,7 +61,7 @@ struct EcefLodCamera {
 
 struct EcefLodCell {
     EcefLodTileKey tile;                // canonico
-    int16_t wrap = 0;                   // copia del mundo en longitud
+    int16_t wrap = 0;                   // copia del mundo en longitud: la mas cercana al foco
     std::optional<EcefLodTileKey> dem;  // tile DEM mas fino que la contiene; nullopt = celda plana
     float demScale = 1.0f;              // ventana de la celda dentro del tile DEM
     float demOffsetX = 0.0f;

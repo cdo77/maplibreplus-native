@@ -102,6 +102,7 @@ private:
     SegmentVector ecefSegments;
 
     std::map<OverscaledTileID, gfx::Texture2DPtr> demTextures; // cache de texturas DEM por tile padre
+    gfx::Texture2DPtr flatDemTexture; // DEM de 1 texel en cero para las celdas planas (sin ningun tile DEM)
 
     // Drapes multi-resolucion (ADR 0037): los 3 render
     // passes offscreen de ATAK (GLMapView2.cpp, 1x/4x/32x de la resolucion base, todos centrados
@@ -112,6 +113,8 @@ private:
     // por alfa de ATAK (GLTerrainTile.cpp), en una sola pasada.
     std::array<TileRenderTargetPtr, TransformState::kEcefDrapeCount> drapes;
     bool drapesRegistered = false;
+    // Cuantos drapes son el planisferio entero (vista de globo), contando desde el mas grueso: 0 a 3.
+    float globalDrapes = 0.0f;
 
     // Mapa de alturas de los iconos 3D (ADR 0038): se rehace solo cuando cambia el area del drape
     // 32x (ya cuantizada) o el conjunto de tiles DEM cargados.

@@ -4,6 +4,8 @@
 #include <mln/util/ecef.hpp>
 
 #include <cmath>
+#include <set>
+#include <tuple>
 
 using namespace mln;
 
@@ -200,4 +202,48 @@ TEST(TerrainEcefLod, DemWindowIsInsideTheAncestor) {
         EXPECT_LE(cell.demOffsetY + cell.demScale, 1.0f + 1e-6f);
     }
     EXPECT_GT(withDem, 0u);
+}
+
+TEST(TerrainEcefLod, GlobeIsDrawnOnce) {
+    // Vista de globo (ojo a 20.000 km). En ECEF hay un solo planeta: con tres copias del mundo el globo se dibujaba
+    // tres veces en el mismo lugar, con la imagen corrida un mundo entero (globo rayado, field-test 01-10).
+    TestView view;
+    view.eyeM = 2.0e7;
+    view.pitchDeg = 5.0;
+    EcefLodCamera camera = makeCamera(view);
+    camera.farM = 6.0e7; // far de la camara orbital alejada: alcanza todo el hemisferio a la vista
+    const auto cells = selectEcefTerrainCells(camera, {}).cells;
+    ASSERT_FALSE(cells.empty());
+    std::set<std::tuple<int, uint32_t, uint32_t>> keys;
+    for (const auto& c : cells) {
+        EXPECT_TRUE(keys.insert({c.tile.z, c.tile.x, c.tile.y}).second) << "celda repetida z" << int(c.tile.z);
+    }
+    for (const auto& c : cells) {
+        for (int z = 0; z < c.tile.z; ++z) {
+            const int shift = c.tile.z - z;
+            EXPECT_EQ(keys.count({z, c.tile.x >> shift, c.tile.y >> shift}), 0u) << "celda dentro de otra";
+        }
+    }
+}
+
+TEST(TerrainEcefLod, CellsAcrossTheAntimeridianUseTheFocusCopy) {
+    // Camara sobre el antimeridiano mirando al este: las celdas del otro lado son vecinas (distancia real) y se
+    // entregan en la copia del mundo del foco, para que su UV caiga dentro de los drapes.
+    TestView view;
+    view.latDeg = 0.0;
+    view.lonDeg = 179.99;
+    view.eyeM = 2000.0;
+    view.pitchDeg = 60.0;
+    view.bearingDeg = 90.0;
+    EcefLodCamera camera = makeCamera(view);
+    camera.focusMercatorX = camera.mercatorX;
+    const auto cells = selectEcefTerrainCells(camera, {}).cells;
+    bool nearAcross = false;
+    for (const auto& c : cells) {
+        const double count = std::pow(2.0, c.tile.z);
+        const double centerX = (c.tile.x + 0.5) / count + c.wrap;
+        EXPECT_LE(std::abs(centerX - camera.focusMercatorX), 0.5);
+        nearAcross = nearAcross || (c.wrap == 1 && c.distanceM < 5000.0);
+    }
+    EXPECT_TRUE(nearAcross);
 }

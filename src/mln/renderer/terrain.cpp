@@ -250,11 +250,9 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         return;
     }
 
+    // Sin tiles DEM (todavia cargando, o sin red) el terreno sigue: sus celdas van planas (ADR 0039). Apagarlo
+    // dejaba ver el mapa plano de MapLibre al inclinar o alejar el globo (field-test 01-10).
     const auto renderTiles = demSource->getRenderTiles();
-    if (!renderTiles || renderTiles->empty()) {
-        teardown(changes);
-        return;
-    }
 
     if (!shader) {
         shader = context.getGenericShader(shaders, terrainShaderGroupName);
@@ -305,6 +303,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
     // la MISMA cuenta que usa RenderOrchestrator::createRenderTree para el covering de tiles de cada drape, asi
     // el area que captura cada render target coincide con el area para la que su covering trajo imagen.
     const auto drapeAreas = state.computeEcefDrapeAreas();
+    globalDrapes = static_cast<float>(
+        std::count_if(drapeAreas.begin(), drapeAreas.end(), [](const auto& area) { return area.global; }));
     for (size_t i = 0; i < drapes.size(); ++i) {
         drapes[i]->setActive(true);
         drapes[i]->setGeographicArea({.center = drapeAreas[i].center, .radiusMeters = drapeAreas[i].radiusMeters});
@@ -324,7 +324,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
     // Tiles DEM cargados con su rango de elevacion, para el LOD (ADR 0039).
     EcefDemIndex ecefDemIndex;
     std::map<EcefLodTileKey, const RenderTile*> ecefDemTiles;
-    for (const RenderTile& tile : *renderTiles) {
+    static const std::vector<std::reference_wrapper<const RenderTile>> noDemTiles;
+    for (const RenderTile& tile : renderTiles ? *renderTiles : noDemTiles) {
         const auto& pid = tile.getOverscaledTileID();
         const Tile& tileData = tile.getTile();
         if (!tileData.isRenderable()) {
@@ -362,21 +363,18 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         const Point<double> cameraMercator = Projection::project(ecefCamera->eyeLatLng, 1.0) / util::tileSize_D;
         camera.mercatorX = cameraMercator.x;
         camera.mercatorY = cameraMercator.y;
+        camera.focusMercatorX = (Projection::project(ecefCamera->focus, 1.0) / util::tileSize_D).x;
         camera.farM = ecefCamera->farM;
         camera.lambda = (viewSize.height * static_cast<double>(pixelRatio) / 2.0) /
                         std::tan(TransformState::kEcefFieldOfViewRad / 2.0);
         camera.viewProjRte = state.getEcefTileMatrix(camera.originEcef, *ecefCamera);
 
         const EcefLodResult lod = selectEcefTerrainCells(camera, ecefDemIndex);
-        const RenderTile* anyDemTile = ecefDemTiles.empty() ? nullptr : ecefDemTiles.begin()->second;
         size_t flatCells = 0;
         for (const EcefLodCell& cell : lod.cells) {
             const auto demIt = cell.dem ? ecefDemTiles.find(*cell.dem) : ecefDemTiles.end();
             const bool flat = demIt == ecefDemTiles.end();
-            const RenderTile* demTile = flat ? anyDemTile : demIt->second;
-            if (!demTile) {
-                break;  // sin ningun DEM cargado no hay textura que enlazar; update() ya lo evita arriba
-            }
+            const RenderTile* demTile = flat ? nullptr : demIt->second;
             flatCells += flat ? 1 : 0;
             subTiles.push_back(SubTile{
                 OverscaledTileID(cell.tile.z, cell.wrap, cell.tile.z, cell.tile.x, cell.tile.y),
@@ -446,18 +444,32 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
     tileLayerGroup->clearDrawables();
     for (const SubTile& st : subTiles) {
 
-        const auto& parentId = st.parent->getOverscaledTileID();
-        auto* bucket = static_cast<const RasterDEMTile&>(st.parent->getTile()).getBucket();
-        const DEMData& dem = bucket->getDEMData();
-
-        auto demIt = demTextures.find(parentId);
-        if (demIt == demTextures.end()) {
-            auto demTexture = context.createTexture2D();
-            demTexture->setImage(dem.getImagePtr());
-            demTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
-                                                 .wrapU = gfx::TextureWrapType::Clamp,
-                                                 .wrapV = gfx::TextureWrapType::Clamp});
-            demIt = demTextures.emplace(parentId, std::move(demTexture)).first;
+        // Celda plana: textura DEM de 1 texel en cero (el shader igual la multiplica por exageracion 0).
+        const DEMData* dem = st.parent
+                                 ? &static_cast<const RasterDEMTile&>(st.parent->getTile()).getBucket()->getDEMData()
+                                 : nullptr;
+        gfx::Texture2DPtr demTexture;
+        if (dem) {
+            const auto& parentId = st.parent->getOverscaledTileID();
+            auto demIt = demTextures.find(parentId);
+            if (demIt == demTextures.end()) {
+                auto texture = context.createTexture2D();
+                texture->setImage(dem->getImagePtr());
+                texture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                  .wrapU = gfx::TextureWrapType::Clamp,
+                                                  .wrapV = gfx::TextureWrapType::Clamp});
+                demIt = demTextures.emplace(parentId, std::move(texture)).first;
+            }
+            demTexture = demIt->second;
+        } else {
+            if (!flatDemTexture) {
+                flatDemTexture = context.createTexture2D();
+                flatDemTexture->setImage(std::make_shared<PremultipliedImage>(Size{1, 1}));
+                flatDemTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                         .wrapU = gfx::TextureWrapType::Clamp,
+                                                         .wrapV = gfx::TextureWrapType::Clamp});
+            }
+            demTexture = flatDemTexture;
         }
 
         // Malla propia de la celda (ECEF real), cacheada por OverscaledTileID: se calcula solo la primera vez
@@ -510,8 +522,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         // Drapes multi-resolucion (ADR 0037): todas las celdas samplean los mismos render targets. El slot de la
         // imagen plana (u_terrain_image, sin uso desde ADR 0041) se bindea a la DEM para no dejar una unidad de
         // textura sin asignar.
-        builder->setTexture(demIt->second, idTerrainImageTexture);
-        builder->setTexture(demIt->second, idTerrainDemTexture);
+        builder->setTexture(demTexture, idTerrainImageTexture);
+        builder->setTexture(demTexture, idTerrainDemTexture);
         for (size_t d = 0; d < drapes.size(); ++d) {
             builder->setTexture(drapes[d]->getTexture(), static_cast<size_t>(idTerrainDrape0Texture) + d);
         }
@@ -521,7 +533,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         for (auto& drawable : builder->clearDrawables()) {
             drawable->setTileID(st.id);
             drawable->setData(std::make_unique<gfx::TerrainDrawableData>(
-                dem.dim, dem.getUnpackVector(), st.flat ? 0.0f : exaggeration, eleDelta,
+                dem ? dem->dim : 1, dem ? dem->getUnpackVector() : std::array<float, 4>{}, st.flat ? 0.0f : exaggeration, eleDelta,
                 st.demScale, st.demOffsetX, st.demOffsetY, ecefOrigin));
             tileLayerGroup->addDrawable(RenderPass::Opaque, st.id, std::move(drawable));
         }
@@ -626,6 +638,7 @@ void RenderTerrain::teardown(UniqueChangeRequestVec& changes) {
     ecefHeightmap.reset();
     ecefHeightmapDemKeys.clear();
     demTextures.clear();
+    flatDemTexture.reset();
     demByTile.clear();
     ecefVertexCache.clear();
     ecefOriginCache.clear();
@@ -689,7 +702,7 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
                                                 .terrain_dim = static_cast<float>(data.dim),
                                                 .terrain_exaggeration = data.exaggeration,
                                                 .ele_delta = data.eleDelta,
-                                                .center_elevation = 0.0f,
+                                                .drape_global = globalDrapes,
                                                 .ecef_mode = 1.0f,
                                                 .pad0 = 0.0f,
                                                 .pad1 = 0.0f,

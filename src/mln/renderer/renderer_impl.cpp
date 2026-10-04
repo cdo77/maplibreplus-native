@@ -24,6 +24,9 @@
 #include <mln/renderer/layer_tweaker.hpp>
 #include <mln/renderer/render_target.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/renderer_backend.hpp>
 #include <Metal/MTLCaptureManager.hpp>
@@ -387,6 +390,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 color = Color::black();
             } else if (!backend.contextIsShared()) {
                 color = renderTreeParameters.backgroundColor;
+                // Camara orbital (ADR 0042): cielo cerca del suelo y espacio negro en la vista de globo, como ATAK.
+                // Interpolado en escala logaritmica de la altura del ojo entre 100 km y 1000 km.
+                if (parameters.ecefCamera && orchestrator.hasTerrain()) {
+                    const double t = std::clamp(std::log10(std::max(parameters.ecefCamera->eyeAglM, 1.0)) - 5.0, 0.0, 1.0);
+                    const auto k = static_cast<float>(1.0 - t);
+                    color = Color{color->r * k, color->g * k, color->b * k, color->a};
+                }
             }
             parameters.renderPass = parameters.encoder->createRenderPass(
                 "main buffer",

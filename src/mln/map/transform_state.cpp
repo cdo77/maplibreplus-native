@@ -10,6 +10,8 @@
 #include <mln/util/globe.hpp>
 #include <mln/util/tile_coordinate.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <numbers>
 
 using namespace std::numbers;
@@ -382,7 +384,18 @@ TransformState::EcefCamera TransformState::computeEcefCamera(
     EcefCamera cam;
     cam.focus = getLatLng();
     cam.focusElevationM = focusElevationM;
-    cam.rangeM = getCameraToCenterDistance() * Projection::getMetersPerPixelAtLatitude(cam.focus.latitude(), getZoom());
+    // GSD de ATAK (MapSceneModel2_gsd/_range): metros/pixel = range * tan(FOV/2) / (alto/2), geometria
+    // PURA, sin ningun termino de latitud. Si aca se usara cam.focus.latitude(), el metros/pixel del pixel
+    // mercator estandar escala por cos(lat) -- correcto para un mapa 2D plano, pero mal para la camara
+    // orbital: cada pan que cambia la latitud del foco corria la distancia real de la camara aunque el
+    // zoom guardado no se tocara. El ADR 0040 original no lo noto porque los gestos normales cambian la
+    // latitud muy poco por cuadro; field-test 04-10, a escala de globo, lo mostro ("con un dedo hace
+    // zoom", "se mueve al reves e impreciso") -- ATAK nunca re-deriva el ojo desde un zoom guardado, lo
+    // mantiene fijo durante el pan, por eso no le pasa (ver CameraController_panTo/panBy, solo lectura
+    // GPLv3). Fix de raiz: la conversion zoom->metros/pixel de la camara real SIEMPRE usa el ecuador como
+    // referencia, nunca la latitud del foco -- igual que el GSD de ATAK, deja de depender de hacia donde
+    // mira la camara.
+    cam.rangeM = getCameraToCenterDistance() * Projection::getMetersPerPixelAtLatitude(0.0, getZoom());
     cam.focusEcef = ecef::llaToEcef(cam.focus, focusElevationM);
     cam.forward = getCameraForwardEcef();
     cam.eyeEcef = globe::subtract(cam.focusEcef, globe::scale(cam.forward, cam.rangeM));
@@ -469,14 +482,21 @@ std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> Trans
         // y los tiles pedidos nunca terminan de llegar (confirmado en campo: z=15 y z=16
         // mezclados con el pitch casi constante).
         constexpr double kRadiusStepFactor = 1.4;
-        // Tope fisico: un cuarto de meridiano (el hemisferio visible). Con la camara muy alejada el radio pasaba el
-        // de la Tierra, la grilla de cuantizacion (radio/8) mandaba el centro al centro de la Tierra y la latitud
-        // salia NaN en cada frame (render trabado, field-test 01-10).
-        constexpr double kMaxDrapeRadiusM = util::M2PI * util::EARTH_RADIUS_M / 4.0;
-        const double radiusMeters = std::min(
-            std::pow(kRadiusStepFactor,
-                     std::ceil(std::log(std::max(continuousRadiusM, 1.0)) / std::log(kRadiusStepFactor))),
-            kMaxDrapeRadiusM);
+        const double radiusMeters = std::pow(
+            kRadiusStepFactor, std::ceil(std::log(std::max(continuousRadiusM, 1.0)) / std::log(kRadiusStepFactor)));
+        // Mas alla de un cuarto de meridiano (hemisferio a la vista) el drape es el planisferio entero: centro en el
+        // ecuador y medio meridiano ecuatorial de radio, asi su recorte mercator es el mundo completo (lon +-180,
+        // lat +-85). Antes se topaba en un cuarto de meridiano alrededor del foco y lo que quedaba afuera del
+        // cuadrado salia estirado (field-test 01-10). Con radios mayores la grilla de cuantizacion (radio/8)
+        // ademas mandaba el centro al centro de la Tierra (latitud NaN, render trabado).
+        constexpr double kQuarterMeridianM = util::M2PI * util::EARTH_RADIUS_M / 4.0;
+        if (radiusMeters > kQuarterMeridianM) {
+            // Centro fijo en (0, 0): el planisferio es siempre el mismo mundo (copia 0) y su covering no cambia con
+            // los gestos. Si siguiera al foco, los tiles de los bordes cambiaban de copia del mundo, se cancelaban y
+            // se volvian a pedir sin llegar nunca (zonas blancas, field-test 01-10). El shader envuelve la u.
+            areas[i] = {.center = LatLng(0.0, 0.0), .radiusMeters = 2.0 * kQuarterMeridianM, .global = true};
+            continue;
+        }
         const double gridStepM = radiusMeters / 8.0;
         const vec3 centerEcef = {std::round(focusEcef[0] / gridStepM) * gridStepM,
                                  std::round(focusEcef[1] / gridStepM) * gridStepM,
@@ -503,6 +523,9 @@ TransformState TransformState::makeSyntheticDrapeState(const TransformState& bas
     // la formula de zoom de mas abajo.
     TransformState synthetic = base;
     synthetic.setRealAltitudeMode(false);
+    // Sin la restriccion mercator de llenar la pantalla: cerca de los polos movia el centro del covering lejos del
+    // area del drape (ADR 0042).
+    synthetic.setConstrainMode(ConstrainMode::None);
     synthetic.setBearing(0.0);
     synthetic.setPitch(0.0);
     synthetic.setRoll(0.0);
@@ -514,12 +537,14 @@ TransformState TransformState::makeSyntheticDrapeState(const TransformState& bas
     synthetic.setFrustumOffset(EdgeInsets());
     synthetic.setSize(Size{textureSizePx, textureSizePx});
 
-    // metros/pixel deseados -> zoom mercator equivalente (256px por tile en zoom 0, con el
-    // achicamiento por latitud que ya usa el resto del motor mercator).
+    // metros/pixel deseados -> zoom mercator equivalente, con el tamano de tile del motor (util::tileSize_D = 512 px
+    // en zoom 0) y el achicamiento por latitud del resto del motor mercator. Con 256 px el zoom salia uno mas alto y
+    // el covering traia imagen solo para la mitad central del drape: en el globo, media Tierra sin imagen (field-test
+    // 01-10); de cerca, el borde de cada drape caia al drape mas grueso.
     const double metersPerPixel = (2.0 * area.radiusMeters) / static_cast<double>(textureSizePx);
     const double metersPerPixelAtZoom0 = (util::M2PI * util::EARTH_RADIUS_M *
                                           std::cos(util::deg2rad(area.center.latitude()))) /
-                                         256.0;
+                                         util::tileSize_D;
     const double zoom = std::log2(std::max(metersPerPixelAtZoom0 / std::max(metersPerPixel, 1e-6), 1.0));
 
     synthetic.setLatLngZoom(area.center, util::clamp<double>(zoom, base.getMinZoom(), base.getMaxZoom()));
@@ -1157,6 +1182,13 @@ ScreenCoordinate TransformState::latLngToScreenCoordinate(const LatLng& latLng) 
         bool occluded = false;
         return latLngToScreenCoordinateGlobe(latLng, occluded);
     }
+    // Camara con altura real (ADR 0043 -- regla de oro), simetrico de screenCoordinateToLatLng: sin esto,
+    // CUALQUIER punto reproyectado con la camara real activa caia por el camino mercator plano de abajo,
+    // que no corresponde a lo que se ve en pantalla (igual causa que el bug original del picking, pero en
+    // la direccion inversa).
+    if (isRealAltitudeModeEnabled() && !size.isEmpty()) {
+        return latLngToScreenCoordinateEcef(latLng);
+    }
     vec4 p;
     return latLngToScreenCoordinate(latLng, p);
 }
@@ -1212,8 +1244,148 @@ LatLng TransformState::screenCoordinateToLatLng(const ScreenCoordinate& point, L
             return {globeLatLng->latitude(), globeLatLng->longitude(), wrapMode};
         }
     }
+    // Camara con altura real (ADR 0043 -- regla de oro): el camino de abajo (proyeccion mercator plana,
+    // pensada para el mapa 2D clasico) IGNORA la camara orbital ECEF real -- son dos camaras distintas que
+    // divergen fuerte cerca de los polos y con la camara muy alejada. Los gestos de un dedo (panTo de ATAK,
+    // AtakNavigation.kt) rayaban un punto con la camara equivocada: la pantalla mostraba otra cosa que la
+    // que el pan movia (field-test 04-10: "con un dedo hace zoom", "se queda pegado en el polo").
+    if (isRealAltitudeModeEnabled() && !size.isEmpty()) {
+        const LatLng ecef = screenCoordinateToLatLngEcef(point);
+        return {ecef.latitude(), ecef.longitude(), wrapMode};
+    }
     auto coord = screenCoordinateToTileCoordinate(point, 0);
     return Projection::unproject(coord.p, 1. / util::tileSize_D, wrapMode);
+}
+
+LatLng TransformState::screenCoordinateToLatLngEcef(const ScreenCoordinate& point) const {
+    namespace globe = util::globe;
+    namespace ecef = util::ecef;
+
+    // Reconstruccion a mano (base de camara + offset por tangente de FOV) tenia un giro geometrico que se
+    // acentuaba con la distancia camara-foco: la base sale del plano tangente en el FOCO (surfaceNormal del
+    // foco), y para un ojo MUY lejos del foco (zoom alejado) eso ya no corresponde al "derecha de pantalla"
+    // real -- el picking se invertia pasado cierto zoom (field-test 04-10: "a 1 km bien, mas lejos al reves,
+    // como si hubiera dos niveles"). Confirmado con una sonda: la relacion este/oeste de un punto lateral
+    // cruza signo en forma continua entre zoom 14 y 15, sin ningun salto de rama.
+    //
+    // Arreglo de raiz, sin reconstruir nada a mano: se arma la MISMA matriz view*proj que usa
+    // getEcefTileMatrix para dibujar (con origen en el propio ojo, sin el corrimiento RTE por sub-tile, que
+    // no hace falta aca), se invierte, y se desproyectan dos puntos NDC (cerca/lejos) para sacar el rayo --
+    // igual tecnica que el picking del globo nativo de MapLibre, getRayDirectionFromPixel/invGlobeMatrix.
+    const EcefCamera orbit = computeEcefCamera(0.0);
+    const mat4 viewProj = getEcefTileMatrix(orbit.eyeEcef, orbit); // origen = ojo -> sin traslacion RTE
+
+    // matrix::invert devuelve true SOLO en el caso degenerado (determinante 0, out sin tocar) y false cuando
+    // SI invirtio -- al reves de lo que parece a primera vista (ver el mismo patron en getInvGlobeMatrix). Un
+    // "if (!invert(...))" aca hacia que CADA llamada cayera al foco sin importar el pixel (massivo bug
+    // encontrado mientras se perseguia, erroneamente, un problema de signo -- field-test 04-10).
+    mat4 invViewProj;
+    if (matrix::invert(invViewProj, viewProj)) {
+        return orbit.focus; // matriz degenerada (tamano de pantalla nulo u otro borde): sin rayo, usar el foco
+    }
+
+    // El signo de ndcY esta invertido a proposito respecto de la convencion "de libro" (la misma que usa
+    // getRayDirectionFromPixel/el picking del globo nativo); ndcX NO -- verificado con una sonda que compara,
+    // punto a punto y en 11 niveles de zoom, contra el camino mercator plano ya probado en campo: arriba de
+    // pantalla tiene que dar SUR, no norte (field-test 04-10, "norte y sur esta invertido, este/oeste bien").
+    // Antes se habia invertido ndcX en cambio (un fix de una ronda previa, cuando TODAVIA estaban presentes el
+    // bug de matrix::invert y el de la raiz negativa de mas abajo): compensaba esos bugs, no un signo real --
+    // arreglados esos, la combinacion correcta es esta, re-derivada de cero con la sonda, no supuesta. No se
+    // identifico la causa exacta dentro de la base de camara de getEcefTileMatrix que produce este signo (ver
+    // ADR 0043 §6.5, la formula del OJO si coincide exacto con ATAK; esto es la proyeccion de un PIXEL a
+    // traves de esa misma base, una cuenta distinta) -- verificado empiricamente, no derivado a mano. Si se
+    // vuelve a tocar esta funcion, repetir la sonda (no asumir un signo por una ronda de fixes anterior).
+    const double ndcX = (2.0 * point.x / size.width) - 1.0;
+    const double ndcY = (2.0 * point.y / size.height) - 1.0;
+    vec4 nearPoint;
+    vec4 farPoint;
+    matrix::transformMat4(nearPoint, vec4{ndcX, ndcY, -1.0, 1.0}, invViewProj);
+    matrix::transformMat4(farPoint, vec4{ndcX, ndcY, 1.0, 1.0}, invViewProj);
+    if (nearPoint[3] == 0.0 || farPoint[3] == 0.0) {
+        return orbit.focus;
+    }
+    // Las dos desproyecciones estan relativas al ojo (sin traslacion en la matriz): la resta ya da la
+    // direccion del rayo, sin necesidad de sumar orbit.eyeEcef para el origen.
+    const vec3 a = {nearPoint[0] / nearPoint[3], nearPoint[1] / nearPoint[3], nearPoint[2] / nearPoint[3]};
+    const vec3 b = {farPoint[0] / farPoint[3], farPoint[1] / farPoint[3], farPoint[2] / farPoint[3]};
+    const vec3 dir = globe::normalize(globe::subtract(b, a));
+
+    // Interseccion contra el ELIPSOIDE WGS84 real (no una esfera): la misma geometria que usa ATAK para
+    // este picking (MapProjectionDisplayModel::earth = Ellipsoid2(semiMajor, semiMajor, semiMinor),
+    // MapSceneModel2.cpp; CameraController_createFocusAltitudeModel infla ese elipsoide por la altitud del
+    // foco para el modelo contra el que raycastea panTo/panBy -- solo lectura GPLv3, no copiado). Tecnica
+    // estandar: escalar el rayo al espacio de la esfera unitaria por los 3 semiejes, resolver ahi, escalar
+    // el resultado de vuelta. El achatamiento WGS84 es ~0,3% (semieje menor ~21 km mas corto) -- demasiado
+    // chico para explicar los bugs de campo de esta sesion, pero es el modelo exacto de la referencia.
+    const vec3 axes = {util::ecef::WGS84_SEMI_MAJOR_M, util::ecef::WGS84_SEMI_MAJOR_M, util::ecef::WGS84_SEMI_MINOR_M};
+    const vec3 originScaled = {orbit.eyeEcef[0] / axes[0], orbit.eyeEcef[1] / axes[1], orbit.eyeEcef[2] / axes[2]};
+    const vec3 dirScaled = {dir[0] / axes[0], dir[1] / axes[1], dir[2] / axes[2]}; // OJO: no es unitario
+
+    // |origen' + t*dir'| = 1 (esfera unitaria): A*t^2 + 2*B*t + C = 0, con A=|dir'|^2 (no 1, dir' no es
+    // unitario tras escalar por semiejes distintos).
+    const double A = globe::dot(dirScaled, dirScaled);
+    const double B = globe::dot(originScaled, dirScaled);
+    const double C = globe::dot(originScaled, originScaled) - 1.0;
+    const double disc = B * B - A * C;
+
+    vec3 hit;
+    bool useFallback = disc < 0.0;
+    if (!useFallback) {
+        const double sq = std::sqrt(disc);
+        const double t0 = (-B - sq) / A;
+        const double t1 = (-B + sq) / A;
+        // La raiz matematicamente mas chica puede caer detras de la camara (t<0): el ojo esta siempre
+        // afuera del elipsoide, asi que por Vieta las dos raices tienen el mismo signo -- si la mas chica da
+        // negativa, tomar la otra; si ESA tambien es negativa, el rayo (la mitad de la recta hacia adelante)
+        // no toca el elipsoide aunque la recta completa si (field-test 04-10: un "hit" detras de la camara
+        // tomado como valido mandaba el punto al lado equivocado del horizonte).
+        const double t = (t0 > 0.0) ? t0 : t1;
+        if (t <= 0.0) {
+            useFallback = true;
+        } else {
+            hit = globe::add(orbit.eyeEcef, globe::scale(dir, t));
+            // Cara de atras del elipsoide (el rayo raspa el horizonte del lado cercano sin tocarlo y entra
+            // por el opuesto, con el globo entero a la vista): la normal en el punto tiene que mirar hacia
+            // la camara. La normal real del elipsoide en un punto P es P/ejes^2, pero el SIGNO de
+            // dot(normal,dir) es el mismo que dot(P,dir) (ejes^2 > 0 siempre), asi que alcanza con P.
+            if (globe::dot(hit, dir) >= 0.0) {
+                useFallback = true;
+            }
+        }
+    }
+    if (useFallback) {
+        // Punto del elipsoide mas cercano al rayo, en la metrica escalada (limite del horizonte, continuo
+        // con el caso de arriba justo en la tangente): punto mas cercano de la RECTA escalada al centro
+        // (formula general, dirScaled no es unitario), proyectado a la esfera unitaria y vuelto a escalar.
+        const double tClosest = A != 0.0 ? -B / A : 0.0;
+        const vec3 closestScaled = globe::add(originScaled, globe::scale(dirScaled, tClosest));
+        const vec3 onUnitSphere = globe::normalize(closestScaled);
+        hit = {onUnitSphere[0] * axes[0], onUnitSphere[1] * axes[1], onUnitSphere[2] * axes[2]};
+    }
+    return ecef::ecefToLatLng(hit);
+}
+
+ScreenCoordinate TransformState::latLngToScreenCoordinateEcef(const LatLng& latLng) const {
+    namespace ecef = util::ecef;
+    namespace globe = util::globe;
+
+    const EcefCamera orbit = computeEcefCamera(0.0);
+    const mat4 viewProj = getEcefTileMatrix(orbit.eyeEcef, orbit); // origen = ojo, igual que en la inversa
+
+    const vec3 posEcef = ecef::llaToEcef(latLng, 0.0);
+    // La matriz espera posiciones relativas al ojo (sin traslacion RTE) -- misma convencion que la inversa.
+    const vec3 rel = globe::subtract(posEcef, orbit.eyeEcef);
+    vec4 clip;
+    matrix::transformMat4(clip, vec4{rel[0], rel[1], rel[2], 1.0}, viewProj);
+    if (clip[3] == 0.0) {
+        return {};
+    }
+    const double ndcX = clip[0] / clip[3];
+    const double ndcY = clip[1] / clip[3];
+    // Inversa exacta de las formulas de NDC de screenCoordinateToLatLngEcef (ndcX natural, ndcY ya en la
+    // convencion de esta base de camara, ver el comentario alli -- no hace falta volver a derivar el signo,
+    // es la misma cuenta despejada al reves).
+    return {(ndcX + 1.0) * 0.5 * size.width, (ndcY + 1.0) * 0.5 * size.height};
 }
 
 mat4 TransformState::coordinatePointMatrix(const mat4& projMatrix) const {
@@ -1259,6 +1431,15 @@ bool TransformState::constrainScreen(double& scale_, double& lat, double& lon) c
 
 void TransformState::constrain(double& scale_, double& x_, double& y_) const {
     if (constrainMode == ConstrainMode::None || constrainMode == ConstrainMode::Screen) {
+        return;
+    }
+
+    // Camara orbital (ADR 0040, 0042): el globo no tiene que llenar la pantalla como el mapa mercator. Exigirlo
+    // trababa el foco cerca del ecuador con zoom bajo (no se llegaba al hemisferio norte, field-test 01-10) e
+    // imponia un zoom minimo. Solo se mantiene el foco dentro del mundo mercator (lat +-85).
+    if (realAltitudeEnabled) {
+        const double maxY = scale_ * util::tileSize_D / 2.0;
+        y_ = std::clamp(y_, -maxY, maxY);
         return;
     }
 

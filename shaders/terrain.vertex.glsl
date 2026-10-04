@@ -14,7 +14,7 @@ layout (std140) uniform TerrainDrawableUBO {
     highp float u_terrain_dim;
     highp float u_terrain_exaggeration;
     highp float u_ele_delta;
-    lowp float drawable_pad1;
+    lowp float u_drape_global; // ver TerrainDrawableUBO::drape_global
     // Camara con altura real (ADR 0034): 1.0 = a_ecef_pos/a_ecef_normal validos (WGS84 real,
     // relativos al origen del sub-tile) y drapes activos (ADR 0037), 0.0 = modo planar
     // mercator de siempre (page propia, u_terrain_image).

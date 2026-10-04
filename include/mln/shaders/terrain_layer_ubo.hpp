@@ -19,7 +19,9 @@ struct alignas(16) TerrainDrawableUBO {
     /* 336 */ float terrain_dim;
     /* 340 */ float terrain_exaggeration;
     /* 344 */ float ele_delta;
-    /* 348 */ float center_elevation;
+    // Cuantos drapes son el planisferio entero (vista de globo), contando desde el 32x: 0 a 3. En esos la u se
+    // envuelve (el planisferio es un mundo exacto) y la v se recorta al borde en los polos, como ATAK.
+    /* 348 */ float drape_global;
     // Camara con altura real (ADR 0034): 1.0 si este drawable usa a_ecef_pos/a_ecef_normal
     // (posicion sobre el elipsoide WGS84 real) y los drapes (ADR 0037); 0.0 en modo planar de
     // siempre (page propia, u_terrain_image).

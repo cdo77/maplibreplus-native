@@ -25,8 +25,9 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kEarthRadiusM = util::ecef::WGS84_SEMI_MAJOR_M;
 constexpr double kEarthCircumferenceM = 2.0 * kPi * kEarthRadiusM;
 
-// Nodo del quadtree con x sin envolver: x fuera de [0, 2^z) es otra copia del mundo en longitud.
-// Asi los vecinos a traves del antimeridiano son simplemente x +- 1.
+// Nodo del quadtree, siempre en el mundo canonico (x en [0, 2^z)). En ECEF hay un solo planeta: con
+// varias copias del mundo (como el camino mercator) el globo se dibujaba hasta 3 veces en el mismo
+// lugar, con la imagen corrida un mundo entero (globo rayado al alejarse, field-test 01-10).
 struct Node {
     uint8_t z;
     int64_t x;
@@ -72,9 +73,7 @@ public:
 
     EcefLodResult run() {
         std::set<Node> leaves;
-        for (int64_t x = -1; x <= 1; ++x) {
-            refine(Node{0, x, 0}, leaves);
-        }
+        refine(Node{0, 0, 0}, leaves);
         enforceNeighborLevels(leaves);
 
         EcefLodResult result;
@@ -91,14 +90,18 @@ public:
 private:
     static int64_t tileCount(uint8_t z) { return int64_t{1} << z; }
 
+    // Desplazamiento entero que lleva `fromX` a la copia del mundo mas cercana a `toX` (mercator [0,1)).
+    static double nearestCopyShift(double fromX, double toX) { return std::round(toX - fromX); }
+
     static EcefLodTileKey canonicalOf(const Node& n) {
-        const int64_t count = tileCount(n.z);
-        return {n.z, static_cast<uint32_t>(((n.x % count) + count) % count), static_cast<uint32_t>(n.y)};
+        return {n.z, static_cast<uint32_t>(n.x), static_cast<uint32_t>(n.y)};
     }
 
-    static int16_t wrapOf(const Node& n) {
-        const int64_t count = tileCount(n.z);
-        return static_cast<int16_t>(n.x >= 0 ? n.x / count : (n.x - count + 1) / count);
+    // Copia del mundo en la que se entrega la celda: la mas cercana al foco (centro de los drapes).
+    int16_t wrapOf(const Node& n) const {
+        const double centerX = (static_cast<double>(n.x) + 0.5) / static_cast<double>(tileCount(n.z));
+        const double focusX = std::isnan(camera.focusMercatorX) ? camera.mercatorX : camera.focusMercatorX;
+        return static_cast<int16_t>(nearestCopyShift(centerX, focusX));
     }
 
     // Tile DEM cargado mas fino que contiene la celda (el ancestro del que ATAK deriva el relieve).
@@ -139,7 +142,9 @@ private:
     // Distancia al punto mas cercano de la celda, a su elevacion media (computeDistanceSquared de ATAK).
     double closestDistanceM(const Node& n, const EcefDemRange& range) const {
         const double count = static_cast<double>(tileCount(n.z));
-        const double mx = std::clamp(camera.mercatorX, n.x / count, (n.x + 1) / count);
+        // La camara en su copia mas cercana a la celda: del otro lado del antimeridiano tambien es vecina.
+        const double cameraX = camera.mercatorX - nearestCopyShift((n.x + 0.5) / count, camera.mercatorX);
+        const double mx = std::clamp(cameraX, n.x / count, (n.x + 1) / count);
         const double my = std::clamp(camera.mercatorY, n.y / count, (n.y + 1) / count);
         const vec3 p = util::ecef::llaToEcef(mercatorToLatLng(mx, my), (range.minM + range.maxM) * 0.5);
         const double dx = p[0] - camera.originEcef[0];
@@ -249,9 +254,11 @@ private:
             const auto z1 = static_cast<uint8_t>(n.z + 1);
             const int64_t x2 = n.x << 1;
             const int64_t y2 = n.y << 1;
-            const Node adjacent[8] = {{z1, x2 - 1, y2},     {z1, x2 - 1, y2 + 1}, {z1, x2 + 2, y2},
-                                      {z1, x2 + 2, y2 + 1}, {z1, x2, y2 - 1},     {z1, x2 + 1, y2 - 1},
-                                      {z1, x2, y2 + 2},     {z1, x2 + 1, y2 + 2}};
+            // En longitud el mundo se cierra: el vecino a traves del antimeridiano es la columna del otro borde.
+            const auto wrapX = [count = tileCount(z1)](int64_t x) { return ((x % count) + count) % count; };
+            const Node adjacent[8] = {{z1, wrapX(x2 - 1), y2}, {z1, wrapX(x2 - 1), y2 + 1}, {z1, wrapX(x2 + 2), y2},
+                                      {z1, wrapX(x2 + 2), y2 + 1}, {z1, x2, y2 - 1}, {z1, x2 + 1, y2 - 1},
+                                      {z1, x2, y2 + 2}, {z1, x2 + 1, y2 + 2}};
             const bool finerNeighbor = std::any_of(std::begin(adjacent), std::end(adjacent),
                                                    [&](const Node& a) { return strictAncestors.contains(a); });
             if (!finerNeighbor) {

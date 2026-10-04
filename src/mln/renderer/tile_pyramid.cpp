@@ -120,6 +120,15 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     // abajo, contra vistas nadir sinteticas -- ver drapeTransformStates (ADR 0037).
     const bool ecefOmnidirectional =
         type == SourceType::RasterDEM && parameters.transformState.isRealAltitudeModeEnabled();
+    // Con la camara real nada se dibuja con el covering de la camara: el relieve lo usa el terreno y la imagen
+    // solo los drapes (ADR 0042). Con el ojo a mas de 1000 km el relieve no se ve (el terreno va plano sin DEM)
+    // y la imagen sale entera de los coverings de los drapes: pedir tiles de la camara ahi solo cancelaba
+    // requests (905 DEM z10 en un field-test de un minuto) y atrasaba la imagen del globo.
+    constexpr double kDemMaxEyeAglM = 1.0e6;
+    const bool skipCameraCovering =
+        parameters.transformState.isRealAltitudeModeEnabled() &&
+        ((type == SourceType::Raster && !parameters.drapeTransformStates.empty()) ||
+         (type == SourceType::RasterDEM && parameters.transformState.computeEcefCamera(0.0).eyeAglM > kDemMaxEyeAglM));
     util::TileCoverParameters tileCoverParameters = {.transformState = parameters.transformState,
                                                      .tileLodMinRadius = parameters.tileLodMinRadius,
                                                      .tileLodScale = parameters.tileLodScale,
@@ -127,7 +136,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                                      .tileLodMode = parameters.tileLodMode,
                                                      .omnidirectional = ecefOmnidirectional};
 
-    if (std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
+    if (!skipCameraCovering && std::cmp_greater_equal(overscaledZoom, zoomRange.min)) {
         int32_t idealZoom = std::min<int32_t>(zoomRange.max, overscaledZoom);
 
         // Make sure we're not reparsing overzoomed raster tiles.

@@ -155,6 +155,16 @@ public:
     ScreenCoordinate latLngToScreenCoordinateGlobe(const LatLng&, bool& occluded) const;
     std::optional<LatLng> screenCoordinateToLatLngGlobe(const ScreenCoordinate&) const;
     vec3 getRayDirectionFromPixel(const ScreenCoordinate&) const;
+    // Punto de "suelo" bajo un pixel con la MISMA camara orbital ECEF que dibuja la escena (ADR 0043 --
+    // regla de oro: picking y render usan siempre la misma camara). Ver el comentario de la implementacion.
+    LatLng screenCoordinateToLatLngEcef(const ScreenCoordinate&) const;
+    // Inversa de la anterior: punto de pantalla donde cae un lat/lng con la MISMA camara orbital ECEF
+    // (ADR 0043 -- regla de oro). Hacia falta para que un pick redondeado de ida y vuelta (pantalla -> mundo
+    // -> pantalla) sea comparable contra el pixel original -- sin esto, `latLngToScreenCoordinate` seguia
+    // cayendo a la proyeccion mercator plana aun con la camara real activa, y cualquier punto de la camara
+    // real reproyectaba mal (field-test 04-10: el pan de un dedo dejo de responder al intentar detectar el
+    // folback del picking por ida y vuelta, porque la vuelta SIEMPRE daba mal, no solo en el folback).
+    ScreenCoordinate latLngToScreenCoordinateEcef(const LatLng&) const;
 
     // Dimensions
     Size getSize() const;
@@ -330,6 +340,9 @@ public:
     struct EcefDrapeArea {
         LatLng center;
         double radiusMeters;
+        // Planisferio entero (centro en el ecuador, radio de medio meridiano ecuatorial): pasa cuando el
+        // area pedida supera un cuarto de meridiano, o sea con el hemisferio a la vista (vista de globo).
+        bool global = false;
     };
     std::array<EcefDrapeArea, kEcefDrapeCount> computeEcefDrapeAreas() const;
 
