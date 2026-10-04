@@ -26,9 +26,10 @@ struct alignas(16) TerrainDrawableUBO {
     // (posicion sobre el elipsoide WGS84 real) y los drapes (ADR 0037); 0.0 en modo planar de
     // siempre (page propia, u_terrain_image).
     /* 352 */ float ecef_mode;
-    /* 356 */ float pad0;
-    /* 360 */ float pad1;
-    /* 364 */ float pad2;
+    // Color plano del casquete polar (ecef_mode == 2): la malla del polo no tiene drapes (el mercator no llega).
+    /* 356 */ float cap_r;
+    /* 360 */ float cap_g;
+    /* 364 */ float cap_b;
     /* 368 */
 };
 static_assert(sizeof(TerrainDrawableUBO) == 23 * 16);

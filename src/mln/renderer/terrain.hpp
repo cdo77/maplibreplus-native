@@ -92,6 +92,20 @@ private:
     // aparece ese OverscaledTileID (cache); la elevacion se aplica despues, en el shader.
     std::shared_ptr<TerrainVertexVector> buildEcefMesh(const OverscaledTileID& id, vec3& originOut) const;
 
+    // Casquetes polares: el mercator termina en +-85,0511 y el quadtree no tiene celdas mas alla, asi que el
+    // globo quedaba hueco en los polos. Malla propia (abanico de anillos desde el polo hasta el borde del
+    // mercator), fuera del sistema de celdas/DEM/drapes; se arma una vez y se dibuja de color plano.
+    struct PolarCap {
+        std::shared_ptr<TerrainVertexVector> vertices;
+        vec3 origin{};
+        std::array<float, 3> color{};
+        OverscaledTileID id{0, 0, 0};
+    };
+    void buildPolarCaps();
+    std::array<PolarCap, 2> polarCaps; // [0] sur, [1] norte
+    std::shared_ptr<TerrainIndexVector> polarCapIndices;
+    SegmentVector polarCapSegments;
+
     style::Terrain options;
 
     gfx::ShaderProgramBasePtr shader;

@@ -202,6 +202,64 @@ void RenderTerrain::buildMesh() {
                               ecefIndices->elements());
 }
 
+void RenderTerrain::buildPolarCaps() {
+    if (polarCaps[0].vertices) {
+        return;
+    }
+    // Rejilla: 1 vertice en el polo + kRings anillos de kSegments vertices, del polo al limite mercator. Los
+    // anillos intermedios mantienen la malla pegada al elipsoide (un abanico plano se hundiria ~6 km al medio).
+    constexpr int32_t kRings = 16;
+    constexpr int32_t kSegments = 96;
+    constexpr double kMercatorLimit = 85.0511287798;
+
+    polarCapIndices = std::make_shared<TerrainIndexVector>();
+    for (int32_t s = 0; s < kSegments; ++s) {
+        polarCapIndices->emplace_back(
+            uint16_t{0}, static_cast<uint16_t>(1 + s), static_cast<uint16_t>(1 + (s + 1) % kSegments));
+    }
+    for (int32_t r = 1; r < kRings; ++r) {
+        const int32_t a = 1 + (r - 1) * kSegments;
+        const int32_t b = 1 + r * kSegments;
+        for (int32_t s = 0; s < kSegments; ++s) {
+            const int32_t s1 = (s + 1) % kSegments;
+            polarCapIndices->emplace_back(
+                static_cast<uint16_t>(a + s), static_cast<uint16_t>(b + s), static_cast<uint16_t>(b + s1));
+            polarCapIndices->emplace_back(
+                static_cast<uint16_t>(a + s), static_cast<uint16_t>(b + s1), static_cast<uint16_t>(a + s1));
+        }
+    }
+    polarCapSegments.clear();
+    polarCapSegments.emplace_back(0, 0, static_cast<std::size_t>(1 + kRings * kSegments), polarCapIndices->elements());
+
+    // Sur blanco, norte azul mar (el mismo del fondo del planisferio).
+    const std::array<std::array<float, 3>, 2> colors{{{0.93f, 0.95f, 0.97f}, {0.07f, 0.15f, 0.30f}}};
+    for (int32_t k = 0; k < 2; ++k) {
+        const double sign = k == 0 ? -1.0 : 1.0;
+        PolarCap& cap = polarCaps[static_cast<std::size_t>(k)];
+        cap.color = colors[static_cast<std::size_t>(k)];
+        cap.origin = util::ecef::llaToEcef(LatLng{sign * 90.0, 0.0}, 0.0);
+        cap.vertices = std::make_shared<TerrainVertexVector>();
+        const auto emit = [&](const LatLng& ll) {
+            const vec3 abs = util::ecef::llaToEcef(ll, 0.0);
+            const vec3 n = util::ecef::surfaceNormal(ll);
+            cap.vertices->emplace_back(TerrainLayoutVertex{
+                {{int16_t{0}, int16_t{0}, int16_t{0}}},
+                {{static_cast<float>(abs[0] - cap.origin[0]), static_cast<float>(abs[1] - cap.origin[1]),
+                  static_cast<float>(abs[2] - cap.origin[2])}},
+                {{static_cast<float>(n[0]), static_cast<float>(n[1]), static_cast<float>(n[2])}}});
+        };
+        emit(LatLng{sign * 90.0, 0.0});
+        for (int32_t r = 1; r <= kRings; ++r) {
+            const double lat = sign * (90.0 - (90.0 - kMercatorLimit) * r / kRings);
+            for (int32_t s = 0; s < kSegments; ++s) {
+                emit(LatLng{lat, -180.0 + 360.0 * s / kSegments});
+            }
+        }
+        // Ids distintos para que el grupo de capas no los mezcle entre si ni con las celdas del quadtree.
+        cap.id = OverscaledTileID(0, static_cast<int16_t>(k == 0 ? 1000 : 1001), CanonicalTileID(0, 0, 0));
+    }
+}
+
 std::shared_ptr<TerrainVertexVector> RenderTerrain::buildEcefMesh(const OverscaledTileID& id, vec3& originOut) const {
     // Mismo orden de emision que espera buildMeshIndices (grid + skirts top/bottom + skirts left/right):
     // posicion ECEF real (WGS84) de cada vertice, relativa al centro geografico de ESTE sub-tile (RTE
@@ -538,6 +596,55 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
             tileLayerGroup->addDrawable(RenderPass::Opaque, st.id, std::move(drawable));
         }
     }
+
+    // Casquetes polares (color plano, DEM plana): se dibujan siempre; el depth test los oculta tras el horizonte.
+    buildPolarCaps();
+    if (!flatDemTexture) {
+        flatDemTexture = context.createTexture2D();
+        flatDemTexture->setImage(std::make_shared<PremultipliedImage>(Size{1, 1}));
+        flatDemTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                 .wrapU = gfx::TextureWrapType::Clamp,
+                                                 .wrapV = gfx::TextureWrapType::Clamp});
+    }
+    for (const PolarCap& cap : polarCaps) {
+        auto vertexAttrs = context.createVertexAttributeArray();
+        if (const auto& attr = vertexAttrs->set(idTerrainPosVertexAttribute)) {
+            attr->setSharedRawData(cap.vertices, offsetof(TerrainLayoutVertex, a1), 0, sizeof(TerrainLayoutVertex),
+                                   gfx::AttributeDataType::Short3);
+        }
+        if (const auto& attr = vertexAttrs->set(idTerrainEcefPosVertexAttribute)) {
+            attr->setSharedRawData(cap.vertices, offsetof(TerrainLayoutVertex, a2), 0, sizeof(TerrainLayoutVertex),
+                                   gfx::AttributeDataType::Float3);
+        }
+        if (const auto& attr = vertexAttrs->set(idTerrainEcefNormalVertexAttribute)) {
+            attr->setSharedRawData(cap.vertices, offsetof(TerrainLayoutVertex, a3), 0, sizeof(TerrainLayoutVertex),
+                                   gfx::AttributeDataType::Float3);
+        }
+        auto builder = context.createDrawableBuilder("terrain-polar-cap");
+        builder->setShader(shader);
+        builder->setIs3D(true);
+        builder->setEnableDepth(true);
+        builder->setDepthType(gfx::DepthMaskType::ReadWrite);
+        builder->setColorMode(gfx::ColorMode::unblended());
+        builder->setCullFaceMode(gfx::CullFaceMode::disabled());
+        builder->setRenderPass(RenderPass::Opaque);
+        builder->setVertexAttributes(std::move(vertexAttrs));
+        builder->setRawVertices({}, cap.vertices->elements(), gfx::AttributeDataType::Short3);
+        builder->setSegments(gfx::Triangles(), polarCapIndices, polarCapSegments.data(), polarCapSegments.size());
+        builder->setTexture(flatDemTexture, idTerrainImageTexture);
+        builder->setTexture(flatDemTexture, idTerrainDemTexture);
+        for (size_t d = 0; d < drapes.size(); ++d) {
+            builder->setTexture(drapes[d]->getTexture(), static_cast<size_t>(idTerrainDrape0Texture) + d);
+        }
+        builder->flush(context);
+        for (auto& drawable : builder->clearDrawables()) {
+            drawable->setTileID(cap.id);
+            drawable->setData(std::make_unique<gfx::TerrainDrawableData>(
+                1, std::array<float, 4>{}, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, cap.origin, cap.color));
+            tileLayerGroup->addDrawable(RenderPass::Opaque, cap.id, std::move(drawable));
+        }
+    }
+
     for (const auto& [tileID, demData] : demByTile) {
         for (int32_t y = 0; y < demData->dim; y += 8) {
             for (int32_t x = 0; x < demData->dim; x += 8) {
@@ -703,10 +810,10 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
                                                 .terrain_exaggeration = data.exaggeration,
                                                 .ele_delta = data.eleDelta,
                                                 .drape_global = globalDrapes,
-                                                .ecef_mode = 1.0f,
-                                                .pad0 = 0.0f,
-                                                .pad1 = 0.0f,
-                                                .pad2 = 0.0f};
+                                                .ecef_mode = data.capColor ? 2.0f : 1.0f,
+                                                .cap_r = data.capColor ? (*data.capColor)[0] : 0.0f,
+                                                .cap_g = data.capColor ? (*data.capColor)[1] : 0.0f,
+                                                .cap_b = data.capColor ? (*data.capColor)[2] : 0.0f};
 
         drawable.mutableUniformBuffers().createOrUpdate(idTerrainDrawableUBO, &drawableUBO, parameters.context);
     });

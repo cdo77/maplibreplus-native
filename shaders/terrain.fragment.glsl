@@ -10,9 +10,9 @@ layout (std140) uniform TerrainDrawableUBO {
     highp float u_ele_delta;
     lowp float u_drape_global; // ver TerrainDrawableUBO::drape_global
     highp float u_ecef_mode;
-    lowp float drawable_pad2;
-    lowp float drawable_pad3;
-    lowp float drawable_pad4;
+    lowp float u_cap_r; // color plano del casquete polar (u_ecef_mode == 2)
+    lowp float u_cap_g;
+    lowp float u_cap_b;
 };
 
 uniform sampler2D u_terrain_image;
@@ -39,7 +39,10 @@ vec2 drape_global_uv(vec2 uv) {
 }
 
 void main() {
-    if (u_ecef_mode > 0.5) {
+    if (u_ecef_mode > 1.5) {
+        // Casquete polar: el mercator termina en +-85,0511 y el quadtree no tiene celdas mas alla; color plano.
+        fragColor = vec4(u_cap_r, u_cap_g, u_cap_b, 1.0);
+    } else if (u_ecef_mode > 0.5) {
         // Drapes multi-resolucion (ADR 0037): ATAK dibuja el terreno una vez por captura, de la
         // mas gruesa a la mas fina, con GL_BLEND por alfa y alfa 0 fuera de cada una
         // (GLMapView2::drawTerrainTiles + GLTerrainTile.cpp) -- cada punto queda con la captura

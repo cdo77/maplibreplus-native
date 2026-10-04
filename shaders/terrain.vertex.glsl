@@ -19,9 +19,9 @@ layout (std140) uniform TerrainDrawableUBO {
     // relativos al origen del sub-tile) y drapes activos (ADR 0037), 0.0 = modo planar
     // mercator de siempre (page propia, u_terrain_image).
     highp float u_ecef_mode;
-    lowp float drawable_pad2;
-    lowp float drawable_pad3;
-    lowp float drawable_pad4;
+    lowp float u_cap_r; // color del casquete polar (solo lo lee el fragment); mismos nombres en ambas etapas
+    lowp float u_cap_g;
+    lowp float u_cap_b;
 };
 
 uniform sampler2D u_terrain_dem;
