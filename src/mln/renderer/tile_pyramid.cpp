@@ -300,28 +300,6 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                  zoomRange,
                                  maxParentTileOverscaleFactor);
 
-    // DRAPE-DIAG temporal (imagen borrosa, 04-10): por zoom, cuantas teselas ideales hay y cuantas ya estan cargadas.
-    if (type == SourceType::Raster && !parameters.drapeTransformStates.empty()) {
-        static int diagFrame = 0;
-        if (++diagFrame % 90 == 0) {
-            std::map<int, std::pair<int, int>> byZoom; // z -> (ideal, cargadas)
-            for (const auto& id : idealTiles) {
-                auto& entry = byZoom[id.canonical.z];
-                ++entry.first;
-                const auto it = tiles.find(id);
-                if (it != tiles.end() && it->second->isRenderable()) {
-                    ++entry.second;
-                }
-            }
-            std::string msg = "DRAPE-DIAG ideal/cargadas por z:";
-            for (const auto& [z, counts] : byZoom) {
-                msg += " z" + std::to_string(z) + "=" + std::to_string(counts.first) + "/" + std::to_string(counts.second);
-            }
-            msg += " rendered=" + std::to_string(renderedTiles.size());
-            mln::Log::Warning(mln::Event::General, msg);
-        }
-    }
-
     for (auto previouslyRenderedTile : previouslyRenderedTiles) {
         Tile& tile = previouslyRenderedTile.second;
         tile.markRenderedPreviously();

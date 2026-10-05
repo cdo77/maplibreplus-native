@@ -428,39 +428,17 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         camera.viewProjRte = state.getEcefTileMatrix(camera.originEcef, *ecefCamera);
 
         const EcefLodResult lod = selectEcefTerrainCells(camera, ecefDemIndex);
-        size_t flatCells = 0;
         for (const EcefLodCell& cell : lod.cells) {
             const auto demIt = cell.dem ? ecefDemTiles.find(*cell.dem) : ecefDemTiles.end();
             const bool flat = demIt == ecefDemTiles.end();
             const RenderTile* demTile = flat ? nullptr : demIt->second;
-            flatCells += flat ? 1 : 0;
             subTiles.push_back(SubTile{
                 OverscaledTileID(cell.tile.z, cell.wrap, cell.tile.z, cell.tile.x, cell.tile.y),
                 demTile, cell.demScale, cell.demOffsetX, cell.demOffsetY, -cell.distanceM, flat});
         }
 
-        static auto lastLodLog = std::chrono::steady_clock::time_point{};
-        const auto lodNow = std::chrono::steady_clock::now();
-        if (lod.fuseTripped || lodNow - lastLodLog > std::chrono::seconds(1)) {
-            lastLodLog = lodNow;
-            // DIAGNOSTICO TEMPORAL (ADR 0039, quitar tras el field-test) + aviso del fusible (ese queda).
-            int minZ = 99, maxZ = 0;
-            for (const EcefLodCell& cell : lod.cells) {
-                minZ = std::min<int>(minZ, cell.tile.z);
-                maxZ = std::max<int>(maxZ, cell.tile.z);
-            }
-            const std::string nearest = lod.cells.empty()
-                                            ? std::string("-")
-                                            : std::to_string(lod.cells.front().distanceM) + "m z" +
-                                                  std::to_string(lod.cells.front().tile.z);
-            Log::Warning(Event::General,
-                std::string("ECEF-LOD cells=") + std::to_string(lod.cells.size()) + " z=" + std::to_string(minZ) +
-                    ".." + std::to_string(maxZ) + " nearest=" + nearest + " flat=" + std::to_string(flatCells) +
-                    " dems=" + std::to_string(ecefDemIndex.size()) + " focusElevM=" +
-                    std::to_string(ecefCamera->focusElevationM) + " rangeM=" + std::to_string(ecefCamera->rangeM) +
-                    " eyeAglM=" + std::to_string(ecefCamera->eyeAglM) + " collided=" +
-                    std::to_string(ecefCamera->collided) + " farM=" + std::to_string(ecefCamera->farM) +
-                    (lod.fuseTripped ? " FUSIBLE: se corto el LOD" : ""));
+        if (lod.fuseTripped) {
+            Log::Warning(Event::General, "ECEF-LOD FUSIBLE: se corto el LOD (cells=" + std::to_string(lod.cells.size()) + ")");
         }
     }
 

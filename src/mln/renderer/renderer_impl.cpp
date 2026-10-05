@@ -497,28 +497,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         parameters.depthRangeSize = 1 - 3 * PaintParameters::numSublayers * PaintParameters::depthEpsilon;
         parameters.ecefSpritePass = true;
         parameters.currentLayer = 0;
-        size_t spriteGroups = 0;
-        size_t spriteDrawables = 0;
         orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
             if (orchestrator.layerGroupIsType(layerGroup, "symbol")) {
                 layerGroup.render(orchestrator, parameters);
-                ++spriteGroups;
-                spriteDrawables += layerGroup.getDrawableCount();
             }
             parameters.currentLayer++;
         });
         parameters.ecefSpritePass = false;
-
-        // DIAGNOSTICO TEMPORAL (ADR 0038, quitar tras el field-test).
-        static int diagCounter = 0;
-        if ((diagCounter++ % 30) == 0) {
-            Log::Warning(Event::General,
-                         "SPRITE-DIAG groups=" + std::to_string(spriteGroups) +
-                             " drawables=" + std::to_string(spriteDrawables) +
-                             " rangeM=" +
-                             (parameters.ecefCamera ? std::to_string(parameters.ecefCamera->rangeM) : std::string("-")) +
-                             " heightmap=" + std::to_string(parameters.ecefHeightmap ? 1 : 0));
-        }
     };
 
     if (parameters.staticData.has3D) {

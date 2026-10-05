@@ -98,32 +98,11 @@ void RenderGeoJSONSource::update(Immutable<style::Source::Impl> baseImpl_,
         } else if (data_) {
             tilePyramid.reduceMemoryUse();
             const uint8_t maxZ = impl().getZoomRange().max;
-            size_t updatedTiles = 0;
-            std::string tileIds;
             for (const auto& pair : tilePyramid.getTiles()) {
                 if (pair.first.canonical.z <= maxZ) {
                     static_cast<GeoJSONTile*>(pair.second.get())
                         ->updateData(data_, needsRelayout, parameters.isUpdateSynchronous);
-                    ++updatedTiles;
-                    if (updatedTiles <= 4) {
-                        tileIds += " " + std::to_string(pair.first.canonical.z) + "/" +
-                                   std::to_string(pair.first.canonical.x) + "/" + std::to_string(pair.first.canonical.y) +
-                                   (pair.second->isRenderable() ? "r" : "-") + (pair.second->isComplete() ? "c" : "p");
-                    }
                 }
-            }
-            // DIAGNOSTICO TEMPORAL (chevron quieto en vehiculo, quitar tras el field-test): una vez por
-            // segundo por fuente, cuantas veces cambio el dato y en que tiles (r=renderizable, c=completo/p=pendiente).
-            static std::map<std::string, std::pair<std::chrono::steady_clock::time_point, size_t>> diagBySource;
-            auto& diagState = diagBySource[impl().id];
-            ++diagState.second;
-            const auto diagNow = std::chrono::steady_clock::now();
-            if (diagNow - diagState.first > std::chrono::seconds(1)) {
-                Log::Warning(Event::General,
-                             "GEOJSON-DIAG " + impl().id + " updates=" + std::to_string(diagState.second) +
-                                 " ecef=" + std::to_string(parameters.transformState.isRealAltitudeModeEnabled()) +
-                                 " tiles=" + std::to_string(updatedTiles) + tileIds);
-                diagState = {diagNow, 0};
             }
         }
     }
