@@ -181,8 +181,12 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         for (const auto& drapeStatePtr : parameters.drapeTransformStates) {
             const TransformState& drapeState = *drapeStatePtr;
             const double drapeZoom = util::clamp<double>(drapeState.getZoom(), zoomRange.min, zoomRange.max);
-            const int32_t drapeIdealZoom =
-                std::min<int32_t>(zoomRange.max, util::coveringZoomLevel(drapeZoom, type, tileSize));
+            // Hacia ARRIBA (nunca mas grueso que lo pedido, como ATAK): coveringZoomLevel redondea al mas cercano para
+            // rasters y dejaba el drape hasta 1.4x mas grueso que su resolucion (imagen borrosa, field-test 04-10).
+            // El +0.3 pide medio nivel mas fino que lo estrictamente necesario (field-test 04-10: con 0.5 de tilt y -0.2 aun faltaba nitidez).
+            const int32_t drapeIdealZoom = std::min<int32_t>(
+                zoomRange.max,
+                static_cast<int32_t>(std::ceil(drapeZoom + std::log2(util::tileSize_D / tileSize) + 0.3)));
 
             util::TileCoverParameters drapeCoverParameters = {.transformState = drapeState,
                                                               .tileLodMinRadius = parameters.tileLodMinRadius,
@@ -213,7 +217,8 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                                     .tileLodScale = parameters.tileLodScale,
                                                     .tileLodPitchThreshold = parameters.tileLodPitchThreshold,
                                                     .tileLodMode = parameters.tileLodMode,
-                                                    .omnidirectional = true};
+                                                    .omnidirectional = true,
+                                                    .includeFocus = true};
         idealTiles = util::tileCover(omniParameters, zoomRange.max, zoomRange, std::nullopt);
         panTiles.clear();
     }
@@ -294,6 +299,28 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                  tiles,
                                  zoomRange,
                                  maxParentTileOverscaleFactor);
+
+    // DRAPE-DIAG temporal (imagen borrosa, 04-10): por zoom, cuantas teselas ideales hay y cuantas ya estan cargadas.
+    if (type == SourceType::Raster && !parameters.drapeTransformStates.empty()) {
+        static int diagFrame = 0;
+        if (++diagFrame % 90 == 0) {
+            std::map<int, std::pair<int, int>> byZoom; // z -> (ideal, cargadas)
+            for (const auto& id : idealTiles) {
+                auto& entry = byZoom[id.canonical.z];
+                ++entry.first;
+                const auto it = tiles.find(id);
+                if (it != tiles.end() && it->second->isRenderable()) {
+                    ++entry.second;
+                }
+            }
+            std::string msg = "DRAPE-DIAG ideal/cargadas por z:";
+            for (const auto& [z, counts] : byZoom) {
+                msg += " z" + std::to_string(z) + "=" + std::to_string(counts.first) + "/" + std::to_string(counts.second);
+            }
+            msg += " rendered=" + std::to_string(renderedTiles.size());
+            mln::Log::Warning(mln::Event::General, msg);
+        }
+    }
 
     for (auto previouslyRenderedTile : previouslyRenderedTiles) {
         Tile& tile = previouslyRenderedTile.second;

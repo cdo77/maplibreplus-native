@@ -359,6 +359,11 @@ void RenderRasterLayer::update(gfx::ShaderRegistry& shaders,
             builder->flush(context);
             for (auto& drawable : builder->clearDrawables()) {
                 drawable->setTileID(tileID);
+                // Orden de dibujo por zoom: la tesela mas fina arriba. Con el recorte por stencil (mapa) el orden no
+                // importa, pero en los drapes del terreno (ADR 0037) las teselas de varios zooms se superponen y el
+                // orden era el de creacion del drawable: una tesela gruesa podia taparle el lugar a la fina (imagen
+                // borrosa y costuras, field-test 04-10). Tiene que fijarse antes de entrar al set ordenado.
+                drawable->setDrawPriority(static_cast<gfx::DrawPriority>(tileID.canonical.z));
                 drawable->setLayerTweaker(layerTweaker);
                 tileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
                 ++stats.drawablesAdded;

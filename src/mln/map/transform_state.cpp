@@ -467,7 +467,10 @@ std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> Trans
         slantToFocusM * 2.0 * std::tan(kEcefFieldOfViewRad / 2.0) / static_cast<double>(size.height);
     const double nativeGsd = util::M2PI * util::EARTH_RADIUS_M * std::cos(latRad) /
                              (256.0 * std::pow(2.0, kImageryNativeZoom));
-    const double scaleAdj = 1.0 + (sinPitch * 1.1);
+    // ATAK usa 1 + 1.1 sin(tilt) (GLMapView2.cpp, rama de camara perspectiva); con el terreno de Sentrion dejaba el drape
+    // fino hasta 1.9x mas grueso que la pantalla en el foco (imagen borrosa, field-test 04-10). 0.25 deja el drape cerca
+    // de la resolucion de pantalla sin achicar de mas el area que cubre.
+    const double scaleAdj = 1.0 + (sinPitch * 0.25);
     const double baseGsd = std::max(viewGsdAtFocus, nativeGsd) * scaleAdj;
 
     const vec3 focusEcef = orbit.focusEcef;
@@ -501,7 +504,21 @@ std::array<TransformState::EcefDrapeArea, TransformState::kEcefDrapeCount> Trans
         const vec3 centerEcef = {std::round(focusEcef[0] / gridStepM) * gridStepM,
                                  std::round(focusEcef[1] / gridStepM) * gridStepM,
                                  std::round(focusEcef[2] / gridStepM) * gridStepM};
-        areas[i] = {.center = ecef::ecefToLatLng(centerEcef), .radiusMeters = radiusMeters};
+        // Cerca de un polo el zoom mercator del covering sintetico (cos(lat) en makeSyntheticDrapeState) cae a 0 o menos
+        // con radios mucho menores que el cuarto de meridiano: el covering pedia la tesela z0 para un area que deberia
+        // tener resolucion moderada y la imagen salia borrosa. Si a esta latitud el drape no puede pasar de z0, tambien
+        // es el planisferio. Es monotono por drape (los finos tienen menos radio), asi que los globales siguen siendo
+        // contiguos desde el mas grueso (drape_global).
+        const LatLng center = ecef::ecefToLatLng(centerEcef);
+        const double mercatorMetersPerPixelAtZoom0 =
+            util::M2PI * util::EARTH_RADIUS_M * std::max(std::cos(util::deg2rad(center.latitude())), 0.0) /
+            util::tileSize_D;
+        const double drapeMetersPerPixel = (2.0 * radiusMeters) / static_cast<double>(kEcefDrapeTextureSizesPx[i]);
+        if (mercatorMetersPerPixelAtZoom0 <= drapeMetersPerPixel) {
+            areas[i] = {.center = LatLng(0.0, 0.0), .radiusMeters = 2.0 * kQuarterMeridianM, .global = true};
+            continue;
+        }
+        areas[i] = {.center = center, .radiusMeters = radiusMeters};
     }
     return areas;
 }

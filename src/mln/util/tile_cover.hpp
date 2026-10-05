@@ -46,6 +46,10 @@ struct TileCoverParameters {
     // tile_pyramid.cpp solo para el source RasterDEM cuando el modo esta encendido; ningun otro
     // source (vectorial, raster de imagen) cambia de comportamiento.
     bool omnidirectional = false;
+    // Solo con omnidirectional: ademas de los tiles alrededor del OJO, agrega los de alrededor del FOCO (tiles chicos
+    // cerca de el), sin solaparse con los del ojo. Con la camara orbital lejos (globo) el ojo queda a miles de km del
+    // foco y, sin esto, el marcador propio (en el foco) no tendria ningun tile.
+    bool includeFocus = false;
 };
 
 int32_t coveringZoomLevel(double z, style::SourceType type, uint16_t tileSize) noexcept;

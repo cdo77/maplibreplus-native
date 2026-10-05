@@ -146,6 +146,29 @@ TEST(EcefCamera, ZoomedOutDrapeIsTheWholeWorld) {
     }
 }
 
+TEST(EcefCamera, NoNonGlobalDrapeCollapsesToZoomZeroNearThePoles) {
+    // Cerca de un polo cos(lat)->0 y el zoom mercator del covering sintetico cae a 0 con radios menores al cuarto de
+    // meridiano (imagen borrosa: tesela z0 para un area de resolucion moderada). Invariante: un drape que no es el
+    // planisferio siempre puede pedir mas que la tesela z0 a la latitud de su centro.
+    for (const double lat : {60.0, 75.0, 80.0, 84.0, 85.0, -84.0}) {
+        for (double zoom = 2.0; zoom <= 16.0; zoom += 1.0) {
+            const auto areas = makeState(zoom, 0.0, 0.0, lat).computeEcefDrapeAreas();
+            for (size_t i = 0; i < areas.size(); ++i) {
+                if (areas[i].global) {
+                    // Contiguos desde el mas grueso: los drapes mas gruesos que uno global tambien lo son.
+                    for (size_t j = i + 1; j < areas.size(); ++j) {
+                        EXPECT_TRUE(areas[j].global) << "lat " << lat << " zoom " << zoom << " drape " << j;
+                    }
+                    continue;
+                }
+                const double mppZoom0 = 2.0 * kPi * 6378137.0 * std::cos(areas[i].center.latitude() * kPi / 180.0) / 512.0;
+                const double mpp = 2.0 * areas[i].radiusMeters / TransformState::kEcefDrapeTextureSizesPx[i];
+                EXPECT_GT(mppZoom0, mpp * 0.95) << "lat " << lat << " zoom " << zoom << " drape " << i;
+            }
+        }
+    }
+}
+
 TEST(EcefCamera, GlobeFocusCanReachAnyLatitude) {
     // Con la camara real el mundo mercator no tiene que llenar la pantalla: con zoom bajo el foco no se traba en el
     // ecuador (no se llegaba al hemisferio norte, field-test 01-10) ni se fuerza un zoom minimo.

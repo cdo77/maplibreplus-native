@@ -8,6 +8,7 @@
 #include <mln/util/tile_cover.hpp>
 #include <mln/util/tile_cover_impl.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -287,16 +288,16 @@ namespace {
 // su propia distancia real al punto donde esta la camara, hasta kOmniMaxZoom -- da tiles chicos
 // (mas detalle de imagen) cerca y tiles grandes lejos, sin fijar una unica resolucion para todo
 // el radio.
-std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& transform, uint8_t requestedZoom) {
+std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& transform,
+                                                       uint8_t requestedZoom,
+                                                       const LatLng& cameraLatLng,
+                                                       double farM) {
     constexpr uint8_t kOmniMinZoom = 10; // ~39km de lado: de sobra para cubrir el radio real desde cualquier borde
     constexpr uint8_t kOmniMaxZoom = 18; // ~150m de lado en el ecuador: buena textura a nivel de calle
     constexpr double kSplitRatio = 1.2;  // subdivide mientras el tile sea > 1.2x su propia distancia real
     const uint8_t maxZ = clamp<uint8_t>(requestedZoom, kOmniMinZoom, kOmniMaxZoom);
 
-    // Camara orbital (ADR 0040): alrededor del OJO hasta su far (estimacion plana, sin relieve).
-    const TransformState::EcefCamera camera = transform.computeEcefCamera(0.0);
-    const LatLng cameraLatLng = camera.eyeLatLng;
-    const double farM = camera.farM;
+    (void)transform;
     const double earthCircumferenceM = 2.0 * pi * util::EARTH_RADIUS_M;
 
     std::vector<OverscaledTileID> result;
@@ -346,6 +347,39 @@ std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& tra
     }
     return result;
 }
+
+// Dos tiles se solapan si estan en la misma copia del mundo y uno es ancestro (o igual) del otro.
+bool tilesOverlap(const OverscaledTileID& a, const OverscaledTileID& b) {
+    if (a.wrap != b.wrap) {
+        return false;
+    }
+    const auto& ca = a.canonical;
+    const auto& cb = b.canonical;
+    const uint8_t zMin = std::min(ca.z, cb.z);
+    return (ca.x >> (ca.z - zMin)) == (cb.x >> (cb.z - zMin)) && (ca.y >> (ca.z - zMin)) == (cb.y >> (cb.z - zMin));
+}
+
+// Tiles de alrededor del OJO hasta su far (camara orbital, ADR 0040; estimacion plana, sin relieve) y, si se pide, los
+// de alrededor del FOCO en un radio chico, sin solaparse con los anteriores.
+std::vector<OverscaledTileID> ecefOmnidirectionalTileCover(const TransformState& transform,
+                                                          uint8_t requestedZoom,
+                                                          bool includeFocus) {
+    const TransformState::EcefCamera camera = transform.computeEcefCamera(0.0);
+    std::vector<OverscaledTileID> result = omnidirectionalTileCover(transform, requestedZoom, camera.eyeLatLng, camera.farM);
+    if (!includeFocus) {
+        return result;
+    }
+    constexpr double kFocusRadiusM = 20000.0;
+    for (const OverscaledTileID& tile : omnidirectionalTileCover(transform, requestedZoom, camera.focus, kFocusRadiusM)) {
+        const bool overlaps = std::any_of(result.begin(), result.end(), [&](const OverscaledTileID& existing) {
+            return tilesOverlap(existing, tile);
+        });
+        if (!overlaps) {
+            result.push_back(tile);
+        }
+    }
+    return result;
+}
 } // namespace
 
 std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
@@ -356,7 +390,7 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
         return globeTileCover(state.transformState, z, zoomRange, overscaledZ.value_or(z));
     }
     if (state.omnidirectional) {
-        return omnidirectionalTileCover(state.transformState, z);
+        return ecefOmnidirectionalTileCover(state.transformState, z, state.includeFocus);
     }
 
     struct Node {
