@@ -614,6 +614,14 @@ mat4 TransformState::getEcefTileMatrix(const vec3& originEcef, const EcefCamera&
     mat4 proj;
     matrix::perspective(proj, kEcefFieldOfViewRad, static_cast<double>(size.width) / size.height, nearZ, farZ);
 
+    // Padding de camara (edgeInsets): mueve el centro de la perspectiva al centro del area VISIBLE, igual que la camara
+    // mercator (getProjMatrix) y el globo (updateGlobeMatrices). Sin esto el foco -- y el chevron que se sigue -- quedaba
+    // en el centro de la pantalla entera al abrir un panel y lo tapaba (regresion al pasar a la camara ECEF, field-test
+    // 06-10). Lo comparten el dibujo, los simbolos y las dos inversas (pixel <-> lat/lng), asi que quedan consistentes.
+    const ScreenCoordinate offset = getCenterOffset();
+    proj[8] = -offset.x * 2.0 / size.width;
+    proj[9] = offset.y * 2.0 / size.height;
+
     mat4 result;
     matrix::multiply(result, proj, translated);
     return result;
