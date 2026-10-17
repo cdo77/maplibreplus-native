@@ -333,8 +333,17 @@ std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& tra
     // Arranca en un area 3x3 de tiles raiz (kOmniMinZoom) alrededor de la camara -- por si el
     // punto real cae cerca de un borde, y a ese zoom cada tile ya mide decenas de km, de sobra
     // para cubrir el radio real desde cualquiera de los 9 vecinos.
-    const double startNumTiles = std::pow(2.0, kOmniMinZoom);
-    const TileCoordinate camAtStart = TileCoordinate::fromLatLng(kOmniMinZoom, cameraLatLng);
+    //
+    // Zoom de arranque (ADR 0058): el area 3x3 tiene que cubrir el radio . Con la camara en altura (vista de globo) el
+    // alcance es de miles de km y un 3x3 de z10 (~39 km de lado) dejaba TODO lo lejano sin ninguna tesela: los simbolos (marcador
+    // propio, dispositivos del equipo) lejos del foco no existian, y no era un problema de posicion ni de colocacion. Se elige el z
+    // mas fino cuyo lado en metros reales (a esta latitud) todavia cubre , entre 2 y kOmniMinZoom (con z0/z1 las tres
+    // columnas darian copias del mismo mundo). Con alcances chicos (camara baja, radio de foco) da kOmniMinZoom: igual que antes.
+    const double circumferenceAtLatitudeM = 2.0 * pi * util::EARTH_RADIUS_M * std::max(std::cos(util::deg2rad(cameraLatLng.latitude())), 0.05);
+    const auto startZoom = static_cast<uint8_t>(clamp<int>(
+        static_cast<int>(std::floor(std::log2(circumferenceAtLatitudeM / std::max(farM, 1.0)))), 2, static_cast<int>(kOmniMinZoom)));
+    const double startNumTiles = std::pow(2.0, startZoom);
+    const TileCoordinate camAtStart = TileCoordinate::fromLatLng(startZoom, cameraLatLng);
     const auto startX = static_cast<int64_t>(std::floor(camAtStart.p.x));
     const auto startY = static_cast<int64_t>(std::floor(camAtStart.p.y));
     for (int64_t oy = startY - 1; oy <= startY + 1; ++oy) {
@@ -342,7 +351,7 @@ std::vector<OverscaledTileID> omnidirectionalTileCover(const TransformState& tra
             continue;
         }
         for (int64_t ox = startX - 1; ox <= startX + 1; ++ox) {
-            visit(kOmniMinZoom, ox, oy);
+            visit(startZoom, ox, oy);
         }
     }
     return result;

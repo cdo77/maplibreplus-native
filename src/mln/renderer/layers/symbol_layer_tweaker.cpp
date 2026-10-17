@@ -22,6 +22,7 @@
 #include <mln/util/ecef.hpp>
 #include <mln/util/globe.hpp>
 #include <mln/util/sprite_altitude.hpp>
+#include <mln/util/logging.hpp>
 #include <mln/renderer/layers/ecef_sprite_matrix.hpp>
 
 #include <cmath>
