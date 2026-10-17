@@ -167,7 +167,11 @@ std::pair<bool, bool> CollisionIndex::placeFeature(
         auto collisionBoundaries = getProjectedCollisionBoundaries(posMatrix, shift, textPixelRatio, box);
         projectedBoxes.emplace_back(
             collisionBoundaries[0], collisionBoundaries[1], collisionBoundaries[2], collisionBoundaries[3]);
-        if ((avoidEdges && !isInsideTile(collisionBoundaries, *avoidEdges)) || !isInsideGrid(collisionBoundaries) ||
+        // Camara real (ADR 0058): la cuadrilla es la de la camara mercator, no la de la escena que se dibuja; un simbolo con
+        // allowOverlap lejos del foco quedaria fuera y se ocultaria antes de que el shader lo ubique. La visibilidad real la dan el
+        // shader (detras de la camara) y la profundidad (detras del relieve o del horizonte).
+        const bool ecefOverlap = allowOverlap && transformState.isRealAltitudeModeEnabled();
+        if ((avoidEdges && !isInsideTile(collisionBoundaries, *avoidEdges)) || (!ecefOverlap && !isInsideGrid(collisionBoundaries)) ||
             (!allowOverlap && collisionGrid.hitTest(projectedBoxes.back().box(), collisionGroupPredicate))) {
             return {false, false};
         }
@@ -325,7 +329,8 @@ std::pair<bool, bool> CollisionIndex::placeLineFeature(
         }
     }
 
-    return {!collisionDetected && firstAndLastGlyph && inGrid, entirelyOffscreen};
+    return {!collisionDetected && firstAndLastGlyph && (inGrid || (allowOverlap && transformState.isRealAltitudeModeEnabled())),
+            entirelyOffscreen};
 }
 
 void CollisionIndex::insertFeature(const CollisionFeature& feature,
