@@ -153,6 +153,10 @@ public:
     // Camara con altura real (ADR 0034, arco Globo/ECEF). Ver Map::setRealAltitudeMode.
     void setRealAltitudeMode(jni::JNIEnv&, jni::jboolean, jni::jdouble);
 
+    // Altura propia de los sprites de una capa de simbolos (ADR 0058). Ver mln::util::SpriteAltitudeRegistry.
+    void setSpriteAltitude(jni::JNIEnv&, const jni::String&, jni::jdouble, jni::jfloat, jni::jboolean);
+    void clearSpriteAltitude(jni::JNIEnv&, const jni::String&);
+
     jni::jboolean isRealAltitudeModeEnabled(jni::JNIEnv&);
 
     void setZoom(jni::JNIEnv&, jni::jdouble, jni::jdouble, jni::jdouble, jni::jlong);

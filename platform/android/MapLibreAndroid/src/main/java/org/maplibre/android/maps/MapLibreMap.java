@@ -338,6 +338,22 @@ public final class MapLibreMap {
   }
 
   /**
+   * Altura propia para los sprites de una capa de simbolos (ADR 0058, vuelo): el ancla sube a {@code altitudeMeters}
+   * (sobre el elipsoide) cuando esta mas de {@code minAglMeters} sobre el terreno, de forma gradual hasta el doble.
+   * Con {@code stick} la capa dibuja el palito que une el suelo con esa altura.
+   */
+  public void setSpriteAltitude(@NonNull String layerId, double altitudeMeters, float minAglMeters, boolean stick) {
+    nativeMapView.setSpriteAltitude(layerId, altitudeMeters, minAglMeters, stick);
+  }
+
+  /**
+   * Quita la altura propia de los sprites de la capa: vuelven a pegarse al relieve (ADR 0058).
+   */
+  public void clearSpriteAltitude(@NonNull String layerId) {
+    nativeMapView.clearSpriteAltitude(layerId);
+  }
+
+  /**
    * @return true si el modo de camara con altura real esta activo
    * @see MapLibreMap#setRealAltitudeMode(boolean, double)
    */

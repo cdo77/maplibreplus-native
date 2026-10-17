@@ -21,6 +21,7 @@
 #include <mln/util/constants.hpp>
 #include <mln/util/ecef.hpp>
 #include <mln/util/globe.hpp>
+#include <mln/util/sprite_altitude.hpp>
 
 #include <cmath>
 
@@ -182,6 +183,8 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         float ecefHeightmapScale = 0.0f;
         float ecefDepthB = 0.0f;
         float ecefStandPx = 0.0f;
+        float ecefAltitudeM = 0.0f;
+        float ecefAirborneAgl = 0.0f;
         std::array<float, 2> ecefHeightmapOffset = {0.0f, 0.0f};
         if (ecefSprites) {
             matrix = ecefSpriteTileMatrix(tileID, state, *parameters.ecefCamera);
@@ -201,6 +204,11 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             ecefHeightmapOffset = {static_cast<float>((tx0 - heightmapBounds[0]) / heightmapBounds[2]),
                                    static_cast<float>((ty0 - heightmapBounds[1]) / heightmapBounds[2])};
             drawable.setTexture(parameters.ecefHeightmap, idSymbolEcefHeightmapTexture);
+            // Altura propia del sprite (ADR 0058): solo las capas que la app registro (el marcador propio en vuelo y su palito).
+            if (const auto altitude = util::SpriteAltitudeRegistry::get().find(getID())) {
+                ecefAltitudeM = static_cast<float>(altitude->altitudeM);
+                ecefAirborneAgl = altitude->stick ? -altitude->minAglM : altitude->minAglM;
+            }
         }
 
         // from symbol_program, makeValues
@@ -263,8 +271,8 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .ecef_heightmap_offset = ecefHeightmapOffset,
             .ecef_depth_b = ecefDepthB,
             .ecef_stand_px = ecefStandPx,
-            .ecef_pad2 = 0.0f,
-            .ecef_pad3 = 0.0f,
+            .ecef_altitude_m = ecefAltitudeM,
+            .ecef_airborne_agl = ecefAirborneAgl,
         };
 
 #if MLN_UBO_CONSOLIDATION

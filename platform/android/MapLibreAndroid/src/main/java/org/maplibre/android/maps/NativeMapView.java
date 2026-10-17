@@ -353,6 +353,22 @@ final class NativeMapView implements NativeMap {
   }
 
   @Override
+  public void setSpriteAltitude(@NonNull String layerId, double altitudeMeters, float minAglMeters, boolean stick) {
+    if (checkState("setSpriteAltitude")) {
+      return;
+    }
+    nativeSetSpriteAltitude(layerId, altitudeMeters, minAglMeters, stick);
+  }
+
+  @Override
+  public void clearSpriteAltitude(@NonNull String layerId) {
+    if (checkState("clearSpriteAltitude")) {
+      return;
+    }
+    nativeClearSpriteAltitude(layerId);
+  }
+
+  @Override
   public boolean isRealAltitudeModeEnabled() {
     if (checkState("isRealAltitudeModeEnabled")) {
       return false;
@@ -1523,6 +1539,10 @@ final class NativeMapView implements NativeMap {
 
   @Keep
   private native void nativeSetRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid);
+
+  private native void nativeSetSpriteAltitude(@NonNull String layerId, double altitudeMeters, float minAglMeters, boolean stick);
+
+  private native void nativeClearSpriteAltitude(@NonNull String layerId);
 
   @Keep
   private native boolean nativeIsRealAltitudeModeEnabled();

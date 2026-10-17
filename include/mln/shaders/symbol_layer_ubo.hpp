@@ -39,8 +39,10 @@ struct alignas(16) SymbolDrawableUBO {
     /* 272 */ float ecef_depth_b;
     // Iconos 3D parados sobre el ancla con la vista inclinada (ADR 0040): px que se suben en pantalla, como ATAK.
     /* 276 */ float ecef_stand_px;
-    /* 280 */ float ecef_pad2;
-    /* 284 */ float ecef_pad3;
+    // Altura propia del sprite (ADR 0058): altitud sobre el elipsoide en metros y umbral de altura sobre el terreno.
+    // Umbral 0 = sin altura (el ancla va pegada al relieve, como siempre); umbral negativo = capa de "palito".
+    /* 280 */ float ecef_altitude_m;
+    /* 284 */ float ecef_airborne_agl;
     /* 288 */
 };
 static_assert(sizeof(SymbolDrawableUBO) == 18 * 16);

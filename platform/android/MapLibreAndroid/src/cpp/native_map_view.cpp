@@ -1,3 +1,4 @@
+#include <mln/util/sprite_altitude.hpp>
 #include "native_map_view.hpp"
 
 #include <cstdlib>
@@ -514,6 +515,21 @@ void NativeMapView::setPitch(jni::JNIEnv&, jni::jdouble pitch, jni::jlong durati
 
 void NativeMapView::setRealAltitudeMode(jni::JNIEnv&, jni::jboolean enabled, jni::jdouble heightMeters) {
     map->setRealAltitudeMode(enabled, heightMeters);
+}
+
+void NativeMapView::setSpriteAltitude(
+    jni::JNIEnv& env, const jni::String& layerId, jni::jdouble altitudeM, jni::jfloat minAglM, jni::jboolean stick) {
+    mln::util::SpriteAltitude value;
+    value.altitudeM = altitudeM;
+    value.minAglM = minAglM;
+    value.stick = stick;
+    mln::util::SpriteAltitudeRegistry::get().set(jni::Make<std::string>(env, layerId), value);
+    map->triggerRepaint();
+}
+
+void NativeMapView::clearSpriteAltitude(jni::JNIEnv& env, const jni::String& layerId) {
+    mln::util::SpriteAltitudeRegistry::get().clear(jni::Make<std::string>(env, layerId));
+    map->triggerRepaint();
 }
 
 jni::jboolean NativeMapView::isRealAltitudeModeEnabled(jni::JNIEnv&) {
@@ -1440,6 +1456,8 @@ void NativeMapView::registerNative(jni::JNIEnv& env) {
         METHOD(&NativeMapView::getPitch, "nativeGetPitch"),
         METHOD(&NativeMapView::setPitch, "nativeSetPitch"),
         METHOD(&NativeMapView::setRealAltitudeMode, "nativeSetRealAltitudeMode"),
+        METHOD(&NativeMapView::setSpriteAltitude, "nativeSetSpriteAltitude"),
+        METHOD(&NativeMapView::clearSpriteAltitude, "nativeClearSpriteAltitude"),
         METHOD(&NativeMapView::isRealAltitudeModeEnabled, "nativeIsRealAltitudeModeEnabled"),
         METHOD(&NativeMapView::getZoom, "nativeGetZoom"),
         METHOD(&NativeMapView::setZoom, "nativeSetZoom"),

@@ -44,8 +44,8 @@ layout (std140) uniform SymbolDrawableUBO {
     highp vec2 u_ecef_heightmap_offset;
     highp float u_ecef_depth_b;
     highp float u_ecef_stand_px;
-    lowp float ecef_pad2;
-    lowp float ecef_pad3;
+    highp float u_ecef_altitude_m;
+    highp float u_ecef_airborne_agl;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -76,6 +76,13 @@ uniform sampler2D u_ecef_heightmap;
 float ecef_height_texel(ivec2 p, ivec2 hi) {
     vec3 rgb = texelFetch(u_ecef_heightmap, clamp(p, ivec2(0), hi), 0).rgb * 255.0;
     return rgb.r * 256.0 + rgb.g + rgb.b / 256.0 - 32768.0;
+}
+
+// El ancla cae dentro del mapa de alturas? Fuera, el borde repetido da alturas falsas: para un sprite en el aire
+// (donde importa) se toma 0 en vez de una altura inventada.
+bool ecef_anchor_inside(vec2 anchor) {
+    vec2 uv = anchor * u_ecef_heightmap_scale + u_ecef_heightmap_offset;
+    return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 }
 
 float ecef_anchor_elevation(vec2 anchor) {
@@ -118,7 +125,18 @@ void main() {
     }
 
     bool ecef_mode = u_ecef_heightmap_scale > 0.0;
-    float anchor_elevation = ecef_mode ? ecef_anchor_elevation(a_pos) : 0.0;
+    float terrain_elevation = ecef_mode ? ecef_anchor_elevation(a_pos) : 0.0;
+    // Altura propia (ADR 0058): con umbral > 0 (marcador en vuelo) o < 0 (su palito), el ancla sube de forma gradual
+    // desde la altura sobre el terreno `gate` hasta `2 gate`; sin altura (umbral 0) todo queda como antes.
+    float agl_gate = abs(u_ecef_airborne_agl);
+    bool stick_mode = ecef_mode && u_ecef_airborne_agl < 0.0;
+    float anchor_elevation = terrain_elevation;
+    if (ecef_mode && agl_gate > 0.0) {
+        float ground = ecef_anchor_inside(a_pos) ? terrain_elevation : 0.0;
+        float agl = max(u_ecef_altitude_m - ground, 0.0);
+        terrain_elevation = ground;
+        anchor_elevation = ground + smoothstep(agl_gate, 2.0 * agl_gate, agl) * agl;
+    }
     vec4 projectedPoint = u_matrix * vec4(a_pos, anchor_elevation, 1);
     highp float camera_to_anchor_distance = projectedPoint.w;
     // See comments in symbol_sdf.vertex
@@ -158,21 +176,43 @@ void main() {
         ? u_label_plane_matrix * vec4(projectedPoint.xy / projectedPoint.w, 0.0, 1.0)
         : u_label_plane_matrix * vec4(a_projected_pos.xy, 0.0, 1.0);
     // Camara real inclinada: el icono se para sobre el ancla (sube u_ecef_stand_px en pantalla), como ATAK.
-    if (ecef_mode) {
+    if (ecef_mode && !stick_mode) {
         projected_pos.y -= u_ecef_stand_px * projected_pos.w;
     }
-    gl_Position = u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + rotation_matrix * (a_offset / 32.0 * max(a_minFontScale, fontScale) + a_pxoffset / 16.0), 0.0, 1.0);
+    vec2 corner_px = rotation_matrix * (a_offset / 32.0 * max(a_minFontScale, fontScale) + a_pxoffset / 16.0);
+    vec4 depth_point = projectedPoint;
+    bool stick_hidden = false;
+    if (stick_mode) {
+        // "Palito" (lollipop de ATAK): el cuadro del icono se estira entre el suelo y el ancla elevada. Las esquinas de
+        // arriba van al extremo del aire, las de abajo al del suelo, y el ancho (el del propio icono, en px) se abre
+        // perpendicular a la linea EN PANTALLA, asi se ve igual de fina mire la camara de frente o desde arriba.
+        vec4 ground_clip = u_matrix * vec4(a_pos, terrain_elevation, 1);
+        vec4 air_px4 = projected_pos;
+        vec4 ground_px4 = u_label_plane_matrix * vec4(ground_clip.xy / ground_clip.w, 0.0, 1.0);
+        vec2 air_px = air_px4.xy / air_px4.w;
+        vec2 ground_px = ground_px4.xy / ground_px4.w;
+        vec2 dir = air_px - ground_px;
+        float len = length(dir);
+        vec2 dn = len > 0.001 ? dir / len : vec2(0.0, -1.0);
+        bool top = a_offset.y < 0.0;
+        float half_w = abs(a_offset.x) / 32.0 * max(a_minFontScale.x, fontScale);
+        corner_px = vec2(-dn.y, dn.x) * (a_offset.x < 0.0 ? -half_w : half_w);
+        projected_pos = vec4(top ? air_px : ground_px, 0.0, 1.0);
+        depth_point = top ? projectedPoint : ground_clip;
+        stick_hidden = len < 1.0 || ground_clip.w <= 0.0;
+    }
+    gl_Position = u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + corner_px, 0.0, 1.0);
     if (ecef_mode) {
         // Como los sprites de ATAK (BatchGeometryPoints.vert), el icono se adelanta hacia la camara su propio
         // radio en metros -- radio en px x metros/px a esa distancia --, asi el relieve no lo tapa aunque el
         // ancla quede unos metros bajo la malla. Escalar el punto por s alrededor del ojo deja x, y, w
         // multiplicados por s y z = s (z - B) + B; s = 1 - radio/distancia = 1 - radio_px tan(fov/2) / (alto/2)
         // (fov 45 de la camara real, alto/2 = -1/u_coord_matrix[1][1]). Detras de la camara (w <= 0): fuera.
-        float radius_px = length(a_offset / 32.0 * max(a_minFontScale, fontScale));
+        float radius_px = stick_mode ? 0.0 : length(a_offset / 32.0 * max(a_minFontScale, fontScale));
         float half_height_px = -1.0 / u_coord_matrix[1][1];
         float s = max(1.0 - radius_px * 0.41421356 / half_height_px, 0.05);
-        gl_Position.z = projectedPoint.w > 0.0
-            ? (s * (projectedPoint.z - u_ecef_depth_b) + u_ecef_depth_b) / (s * projectedPoint.w)
+        gl_Position.z = (depth_point.w > 0.0 && !stick_hidden)
+            ? (s * (depth_point.z - u_ecef_depth_b) + u_ecef_depth_b) / (s * depth_point.w)
             : 2.0;
     }
 

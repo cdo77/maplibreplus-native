@@ -80,6 +80,10 @@ interface NativeMap {
   // no reemplaza setPitch/setZoom ni el resto de la camara estandar, que sigue funcionando igual.
   void setRealAltitudeMode(boolean enabled, double heightMetersAboveEllipsoid);
 
+  void setSpriteAltitude(@NonNull String layerId, double altitudeMeters, float minAglMeters, boolean stick);
+
+  void clearSpriteAltitude(@NonNull String layerId);
+
   boolean isRealAltitudeModeEnabled();
 
   void setZoom(double zoom, @NonNull PointF focalPoint, long duration);
