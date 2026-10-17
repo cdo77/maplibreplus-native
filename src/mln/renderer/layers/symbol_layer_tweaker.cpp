@@ -22,6 +22,7 @@
 #include <mln/util/ecef.hpp>
 #include <mln/util/globe.hpp>
 #include <mln/util/sprite_altitude.hpp>
+#include <mln/renderer/layers/ecef_sprite_matrix.hpp>
 
 #include <cmath>
 
@@ -55,35 +56,6 @@ const auto& getProperty(const SymbolBucket::PaintProperties& paintProps, bool is
 template <typename TText, typename TIcon, std::size_t N>
 auto getInterpFactor(const SymbolBucket::PaintProperties& paintProps, bool isText, float currentZoom) {
     return std::get<N>(getProperty<TText, TIcon>(paintProps, isText)->interpolationFactor(currentZoom));
-}
-
-// Tile-local (x, y en [0,EXTENT], z = metros sobre el elipsoide) -> clip de la camara con altura real
-// (ADR 0038): matriz RTE de la camara (TransformState::getEcefTileMatrix) por una afin local alrededor
-// de la esquina NO del tile -- este y sur en metros por unidad de tile, arriba en metros. En un tile
-// z14 (~2,4 km) el error por curvatura es de ~0,5 m.
-mat4 ecefSpriteTileMatrix(const UnwrappedTileID& tileID,
-                          const TransformState& state,
-                          const TransformState::EcefCamera& camera) {
-    namespace ecef = util::ecef;
-    namespace globe = util::globe;
-
-    const LatLng northWest(tileID.canonical);
-    const vec3 origin = ecef::llaToEcef(northWest, 0.0);
-    const vec3 up = ecef::surfaceNormal(northWest);
-    const vec3 east = globe::normalize(globe::cross(vec3{0.0, 0.0, 1.0}, up));
-    const vec3 north = globe::cross(up, east);
-    const double metersPerUnit = util::M2PI * util::EARTH_RADIUS_M * std::cos(util::deg2rad(northWest.latitude())) /
-                                 std::pow(2.0, tileID.canonical.z) / util::EXTENT;
-
-    mat4 local = matrix::identity4();
-    for (size_t row = 0; row < 3; ++row) {
-        local[0 * 4 + row] = east[row] * metersPerUnit;
-        local[1 * 4 + row] = -north[row] * metersPerUnit;
-        local[2 * 4 + row] = up[row];
-    }
-    mat4 result;
-    matrix::multiply(result, state.getEcefTileMatrix(origin, camera), local);
-    return result;
 }
 
 } // namespace
@@ -185,9 +157,16 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         float ecefStandPx = 0.0f;
         float ecefAltitudeM = 0.0f;
         float ecefAirborneAgl = 0.0f;
+        std::array<float, 4> ecefExact = {0.0f, 0.0f, 0.0f, 0.0f};
         std::array<float, 2> ecefHeightmapOffset = {0.0f, 0.0f};
         if (ecefSprites) {
-            matrix = ecefSpriteTileMatrix(tileID, state, *parameters.ecefCamera);
+            // Tiles gruesos (z <= kEcefExactMaxZoom, es decir de mas de ~10 km de lado y por eso lejos del ojo): la afin plana por
+            // tile hunde el ancla por la curvatura (un dispositivo lejos del foco desde el globo, ADR 0038); el shader ubica cada
+            // ancla en su posicion ECEF exacta (ADR 0058). A esa distancia el float32 absoluto (~1 m) no se nota.
+            constexpr uint8_t kEcefExactMaxZoom = 12;
+            const bool ecefExactTile = tileID.canonical.z <= kEcefExactMaxZoom;
+            matrix = ecefExactTile ? state.getEcefTileMatrix(vec3{0.0, 0.0, 0.0}, *parameters.ecefCamera)
+                                   : ecefSpriteTileMatrix(tileID, state, *parameters.ecefCamera);
             const double nearM = parameters.ecefCamera->nearM;
             const double farM = parameters.ecefCamera->farM;
             ecefDepthB = static_cast<float>(2.0 * farM * nearM / (nearM - farM));
@@ -196,13 +175,15 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             // cercano -- que en pantalla queda debajo del ancla -- no le tapa la mitad inferior.
             constexpr double kUniformIconHalfHeightPx = 24.0;
             ecefStandPx = static_cast<float>(kUniformIconHalfHeightPx * std::sin(state.getPitch()));
-            const auto& heightmapBounds = parameters.ecefHeightmapMercator;
-            const double tilesAtZ = std::pow(2.0, tileID.canonical.z);
-            const double tx0 = (tileID.canonical.x + (tileID.wrap * tilesAtZ)) / tilesAtZ;
-            const double ty0 = tileID.canonical.y / tilesAtZ;
-            ecefHeightmapScale = static_cast<float>(1.0 / (util::EXTENT * tilesAtZ * heightmapBounds[2]));
-            ecefHeightmapOffset = {static_cast<float>((tx0 - heightmapBounds[0]) / heightmapBounds[2]),
-                                   static_cast<float>((ty0 - heightmapBounds[1]) / heightmapBounds[2])};
+            const auto anchorMap = ecefHeightmapAnchor(tileID, parameters.ecefHeightmapMercator);
+            ecefHeightmapScale = anchorMap.scale;
+            ecefHeightmapOffset = anchorMap.offset;
+            if (ecefExactTile) {
+                ecefExact = {static_cast<float>(anchorMap.tx0),
+                             static_cast<float>(anchorMap.ty0),
+                             static_cast<float>(anchorMap.mercatorPerUnit),
+                             1.0f};
+            }
             drawable.setTexture(parameters.ecefHeightmap, idSymbolEcefHeightmapTexture);
             // Altura propia del sprite (ADR 0058): solo las capas que la app registro (el marcador propio en vuelo y su palito).
             if (const auto altitude = util::SpriteAltitudeRegistry::get().find(getID())) {
@@ -273,6 +254,7 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .ecef_stand_px = ecefStandPx,
             .ecef_altitude_m = ecefAltitudeM,
             .ecef_airborne_agl = ecefAirborneAgl,
+            .ecef_exact = ecefExact,
         };
 
 #if MLN_UBO_CONSOLIDATION

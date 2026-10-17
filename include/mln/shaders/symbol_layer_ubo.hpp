@@ -43,9 +43,12 @@ struct alignas(16) SymbolDrawableUBO {
     // Umbral 0 = sin altura (el ancla va pegada al relieve, como siempre); umbral negativo = capa de "palito".
     /* 280 */ float ecef_altitude_m;
     /* 284 */ float ecef_airborne_agl;
-    /* 288 */
+    // Posicion exacta por ancla para tiles gruesos (ADR 0058, vista de globo): origen mercator del tile (x, y), mercator por
+    // unidad de tile y bandera (> 0,5 = exacto). En tiles chicos queda en 0 y se usa la afin local de siempre.
+    /* 288 */ std::array<float, 4> ecef_exact;
+    /* 304 */
 };
-static_assert(sizeof(SymbolDrawableUBO) == 18 * 16);
+static_assert(sizeof(SymbolDrawableUBO) == 19 * 16);
 
 struct alignas(16) SymbolTilePropsUBO {
     /*  0 */ /*bool*/ int is_text;

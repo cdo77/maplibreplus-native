@@ -13,6 +13,7 @@ layout (std140) uniform LineEvaluatedPropsUBO {
 in vec2 v_width2;
 in vec2 v_normal;
 in float v_gamma_scale;
+in vec2 v_tile_pos;
 
 #pragma mapbox: define highp vec4 color
 #pragma mapbox: define lowp float blur
@@ -22,6 +23,11 @@ void main() {
     #pragma mapbox: initialize highp vec4 color
     #pragma mapbox: initialize lowp float blur
     #pragma mapbox: initialize lowp float opacity
+
+    // Recorte a la extension del tesela (solo el pase de la camara real lo pone fuera de [0, 8192]).
+    if (v_tile_pos.x < 0.0 || v_tile_pos.y < 0.0 || v_tile_pos.x > 8192.0 || v_tile_pos.y > 8192.0) {
+        discard;
+    }
 
     // Calculate the distance of the pixel from the line in pixels.
     float dist = length(v_normal) * v_width2.s;

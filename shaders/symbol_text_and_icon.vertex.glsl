@@ -53,6 +53,7 @@ layout (std140) uniform SymbolDrawableUBO {
     highp float u_ecef_stand_px;
     lowp float ecef_pad2;
     lowp float ecef_pad3;
+    highp vec4 u_ecef_exact;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -89,6 +90,13 @@ float ecef_height_texel(ivec2 p, ivec2 hi) {
     return rgb.r * 256.0 + rgb.g + rgb.b / 256.0 - 32768.0;
 }
 
+// El ancla cae dentro del mapa de alturas? Fuera, el borde repetido da alturas falsas: en tiles gruesos y para un sprite en el
+// aire se toma 0 en vez de una altura inventada.
+bool ecef_anchor_inside(vec2 anchor) {
+    vec2 uv = anchor * u_ecef_heightmap_scale + u_ecef_heightmap_offset;
+    return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+}
+
 float ecef_anchor_elevation(vec2 anchor) {
     ivec2 dim = textureSize(u_ecef_heightmap, 0);
     vec2 coord = (anchor * u_ecef_heightmap_scale + u_ecef_heightmap_offset) * vec2(dim) - 0.5;
@@ -100,6 +108,24 @@ float ecef_anchor_elevation(vec2 anchor) {
     float bl = ecef_height_texel(c + ivec2(0, 1), hi);
     float br = ecef_height_texel(c + ivec2(1, 1), hi);
     return mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+}
+
+// Posicion exacta por ancla (ADR 0058): para tiles gruesos el ancla (x, y tile-local) se convierte a mercator -> lat/lon ->
+// ECEF (WGS84) en el shader en vez de usar la afin plana del tile, que por la curvatura hunde el ancla. u_matrix es en ese
+// caso la matriz de la camara con origen en el centro de la Tierra. Con la bandera apagada es la afin de siempre.
+vec4 ecef_project(vec2 p, float h) {
+    if (u_ecef_exact.w < 0.5) {
+        return u_matrix * vec4(p, h, 1);
+    }
+    float mx = u_ecef_exact.x + p.x * u_ecef_exact.z;
+    float my = u_ecef_exact.y + p.y * u_ecef_exact.z;
+    float lon = (mx - 0.5) * 6.28318530718;
+    float lat = 2.0 * atan(exp(3.14159265359 * (1.0 - 2.0 * my))) - 1.57079632679;
+    float sl = sin(lat);
+    float cl = cos(lat);
+    float n = 6378137.0 / sqrt(1.0 - 0.00669437999014 * sl * sl);
+    vec3 ecef = vec3((n + h) * cl * cos(lon), (n + h) * cl * sin(lon), (n * (1.0 - 0.00669437999014) + h) * sl);
+    return u_matrix * vec4(ecef, 1);
 }
 
 void main() {
@@ -136,8 +162,8 @@ void main() {
     }
 
     bool ecef_mode = u_ecef_heightmap_scale > 0.0;
-    float anchor_elevation = ecef_mode ? ecef_anchor_elevation(a_pos) : 0.0;
-    vec4 projectedPoint = u_matrix * vec4(a_pos, anchor_elevation, 1);
+    float anchor_elevation = ecef_mode ? ((u_ecef_exact.w > 0.5 && !ecef_anchor_inside(a_pos)) ? 0.0 : ecef_anchor_elevation(a_pos)) : 0.0;
+    vec4 projectedPoint = ecef_project(a_pos, anchor_elevation);
     highp float camera_to_anchor_distance = projectedPoint.w;
     // If the label is pitched with the map, layout is done in pitched space,
     // which makes labels in the distance smaller relative to viewport space.
@@ -165,7 +191,7 @@ void main() {
         // Point labels with 'rotation-alignment: map' are horizontal with respect to tile units
         // To figure out that angle in projected space, we draw a short horizontal line in tile
         // space, project it, and measure its angle in projected space.
-        vec4 offsetProjectedPoint = u_matrix * vec4(a_pos + vec2(1, 0), anchor_elevation, 1);
+        vec4 offsetProjectedPoint = ecef_project(a_pos + (u_ecef_exact.w > 0.5 ? vec2(512.0, 0.0) : vec2(1.0, 0.0)), anchor_elevation);
 
         vec2 a = projectedPoint.xy / projectedPoint.w;
         vec2 b = offsetProjectedPoint.xy / offsetProjectedPoint.w;

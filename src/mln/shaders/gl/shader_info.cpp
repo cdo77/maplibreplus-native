@@ -326,7 +326,9 @@ const std::vector<AttributeInfo> LineShaderInfo::attributes = {
     AttributeInfo{"a_offset", idLineOffsetVertexAttribute},
     AttributeInfo{"a_width", idLineWidthVertexAttribute},
 };
-const std::vector<TextureInfo> LineShaderInfo::textures = {};
+const std::vector<TextureInfo> LineShaderInfo::textures = {
+    TextureInfo{"u_ecef_heightmap", idLineEcefHeightmapTexture},
+};
 
 // Location Indicator
 using LocationIndicatorInfo = ShaderInfo<BuiltIn::LocationIndicatorShader, gfx::Backend::Type::OpenGL>;

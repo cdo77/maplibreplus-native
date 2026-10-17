@@ -13,6 +13,8 @@
 #include <mln/style/layers/line_layer_properties.hpp>
 #include <mln/util/logging.hpp>
 #include <mln/util/math.hpp>
+#include <mln/util/sprite_altitude.hpp>
+#include <mln/renderer/layers/ecef_sprite_matrix.hpp>
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/shaders/mtl/line.hpp>
@@ -224,8 +226,24 @@ void LineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters
         const auto anchor = evaluated.get<LineTranslateAnchor>();
         constexpr bool nearClipped = false;
         constexpr bool inViewportPixelUnits = false; // from RenderTile::translatedMatrix
-        const auto matrix = getTileMatrix(
+        auto matrix = getTileMatrix(
             tileID, parameters, translation, anchor, nearClipped, inViewportPixelUnits, drawable);
+
+        // Pase de lineas de la camara real (ADR 0058): solo las capas registradas por la app y solo las lineas simples.
+        float ecefHeightmapScale = 0.0f;
+        float ecefDepthB = 0.0f;
+        std::array<float, 2> ecefHeightmapOffset = {0.0f, 0.0f};
+        if (util::EcefLineRegistry::get().contains(getID()) && drawable.getType() == static_cast<int>(LineType::Simple) &&
+            parameters.ecefHeightmap && parameters.ecefCamera && parameters.state.isRealAltitudeModeEnabled()) {
+            matrix = ecefSpriteTileMatrix(tileID, parameters.state, *parameters.ecefCamera);
+            const double nearM = parameters.ecefCamera->nearM;
+            const double farM = parameters.ecefCamera->farM;
+            ecefDepthB = static_cast<float>(2.0 * farM * nearM / (nearM - farM));
+            const auto anchorMap = ecefHeightmapAnchor(tileID, parameters.ecefHeightmapMercator);
+            ecefHeightmapScale = anchorMap.scale;
+            ecefHeightmapOffset = anchorMap.offset;
+            drawable.setTexture(parameters.ecefHeightmap, idLineEcefHeightmapTexture);
+        }
 
 #if !MLN_UBO_CONSOLIDATION
         auto& drawableUniforms = drawable.mutableUniformBuffers();
@@ -246,7 +264,14 @@ void LineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters
                     .gapwidth_t = std::get<0>(binders->get<LineGapWidth>()->interpolationFactor(zoom)),
                     .offset_t = std::get<0>(binders->get<LineOffset>()->interpolationFactor(zoom)),
                     .width_t = std::get<0>(binders->get<LineWidth>()->interpolationFactor(zoom)),
-                    .pad1 = 0
+                    .pad1 = 0,
+                    .ecef_heightmap_scale = ecefHeightmapScale,
+                    .ecef_pad0 = 0.0f,
+                    .ecef_heightmap_offset = ecefHeightmapOffset,
+                    .ecef_depth_b = ecefDepthB,
+                    .ecef_pad1 = 0.0f,
+                    .ecef_pad2 = 0.0f,
+                    .ecef_pad3 = 0.0f
                 };
 
 #if !MLN_UBO_CONSOLIDATION

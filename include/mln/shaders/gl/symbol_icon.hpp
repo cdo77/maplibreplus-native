@@ -56,6 +56,7 @@ layout (std140) uniform SymbolDrawableUBO {
     highp float u_ecef_stand_px;
     highp float u_ecef_altitude_m;
     highp float u_ecef_airborne_agl;
+    highp vec4 u_ecef_exact;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -111,6 +112,24 @@ float ecef_anchor_elevation(vec2 anchor) {
     return mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
 }
 
+// Posicion exacta por ancla (ADR 0058): para tiles gruesos el ancla (x, y tile-local) se convierte a mercator -> lat/lon ->
+// ECEF (WGS84) en el shader en vez de usar la afin plana del tile, que por la curvatura hunde el ancla. u_matrix es en ese
+// caso la matriz de la camara con origen en el centro de la Tierra. Con la bandera apagada es la afin de siempre.
+vec4 ecef_project(vec2 p, float h) {
+    if (u_ecef_exact.w < 0.5) {
+        return u_matrix * vec4(p, h, 1);
+    }
+    float mx = u_ecef_exact.x + p.x * u_ecef_exact.z;
+    float my = u_ecef_exact.y + p.y * u_ecef_exact.z;
+    float lon = (mx - 0.5) * 6.28318530718;
+    float lat = 2.0 * atan(exp(3.14159265359 * (1.0 - 2.0 * my))) - 1.57079632679;
+    float sl = sin(lat);
+    float cl = cos(lat);
+    float n = 6378137.0 / sqrt(1.0 - 0.00669437999014 * sl * sl);
+    vec3 ecef = vec3((n + h) * cl * cos(lon), (n + h) * cl * sin(lon), (n * (1.0 - 0.00669437999014) + h) * sl);
+    return u_matrix * vec4(ecef, 1);
+}
+
 void main() {
     highp float u_opacity = u_is_text_prop ? u_text_opacity : u_icon_opacity;
 
@@ -142,7 +161,7 @@ lowp float opacity = u_opacity;
     }
 
     bool ecef_mode = u_ecef_heightmap_scale > 0.0;
-    float terrain_elevation = ecef_mode ? ecef_anchor_elevation(a_pos) : 0.0;
+    float terrain_elevation = ecef_mode ? ((u_ecef_exact.w > 0.5 && !ecef_anchor_inside(a_pos)) ? 0.0 : ecef_anchor_elevation(a_pos)) : 0.0;
     // Altura propia (ADR 0058): con umbral > 0 (marcador en vuelo) o < 0 (su palito), el ancla sube de forma gradual
     // desde la altura sobre el terreno `gate` hasta `2 gate`; sin altura (umbral 0) todo queda como antes.
     float agl_gate = abs(u_ecef_airborne_agl);
@@ -154,7 +173,7 @@ lowp float opacity = u_opacity;
         terrain_elevation = ground;
         anchor_elevation = ground + smoothstep(agl_gate, 2.0 * agl_gate, agl) * agl;
     }
-    vec4 projectedPoint = u_matrix * vec4(a_pos, anchor_elevation, 1);
+    vec4 projectedPoint = ecef_project(a_pos, anchor_elevation);
     highp float camera_to_anchor_distance = projectedPoint.w;
     // See comments in symbol_sdf.vertex
     highp float distance_ratio = u_pitch_with_map ?
@@ -175,7 +194,7 @@ lowp float opacity = u_opacity;
     highp float symbol_rotation = 0.0;
     if (u_rotate_symbol) {
         // See comments in symbol_sdf.vertex
-        vec4 offsetProjectedPoint = u_matrix * vec4(a_pos + vec2(1, 0), anchor_elevation, 1);
+        vec4 offsetProjectedPoint = ecef_project(a_pos + (u_ecef_exact.w > 0.5 ? vec2(512.0, 0.0) : vec2(1.0, 0.0)), anchor_elevation);
 
         vec2 a = projectedPoint.xy / projectedPoint.w;
         vec2 b = offsetProjectedPoint.xy / offsetProjectedPoint.w;
@@ -203,8 +222,9 @@ lowp float opacity = u_opacity;
         // "Palito" (lollipop de ATAK): el cuadro del icono se estira entre el suelo y el ancla elevada. Las esquinas de
         // arriba van al extremo del aire, las de abajo al del suelo, y el ancho (el del propio icono, en px) se abre
         // perpendicular a la linea EN PANTALLA, asi se ve igual de fina mire la camara de frente o desde arriba.
-        vec4 ground_clip = u_matrix * vec4(a_pos, terrain_elevation, 1);
+        vec4 ground_clip = ecef_project(a_pos, terrain_elevation);
         vec4 air_px4 = projected_pos;
+        air_px4.y -= u_ecef_stand_px * air_px4.w; // el palito llega hasta el centro del chevron, que se para sobre su ancla
         vec4 ground_px4 = u_label_plane_matrix * vec4(ground_clip.xy / ground_clip.w, 0.0, 1.0);
         vec2 air_px = air_px4.xy / air_px4.w;
         vec2 ground_px = ground_px4.xy / ground_px4.w;

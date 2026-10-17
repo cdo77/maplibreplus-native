@@ -1,3 +1,4 @@
+#include <mln/util/sprite_altitude.hpp>
 #include <mln/renderer/renderer_impl.hpp>
 
 #include <mln/geometry/line_atlas.hpp>
@@ -498,7 +499,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         parameters.ecefSpritePass = true;
         parameters.currentLayer = 0;
         orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
-            if (orchestrator.layerGroupIsType(layerGroup, "symbol")) {
+            if (orchestrator.layerGroupIsType(layerGroup, "symbol") ||
+                (orchestrator.layerGroupIsType(layerGroup, "line") &&
+                 util::EcefLineRegistry::get().contains(layerGroup.getName()))) {
                 layerGroup.render(orchestrator, parameters);
             }
             parameters.currentLayer++;

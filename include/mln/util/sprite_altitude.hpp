@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mln {
 namespace util {
@@ -47,6 +48,35 @@ public:
 private:
     mutable std::mutex mutex;
     std::unordered_map<std::string, SpriteAltitude> entries;
+};
+
+/// Capas de linea que se dibujan en el pase propio de la camara real (ADR 0058) en vez de en los drapes del terreno:
+/// geometria con pixeles fijos y profundidad contra la malla, sin los bordes dobles/borrosos de los drapes multi-resolucion.
+/// Es opt-in por capa: las demas lineas del estilo siguen igual. Solo lineas simples (sin patron, gradiente ni guiones).
+class EcefLineRegistry {
+public:
+    static EcefLineRegistry& get() {
+        static EcefLineRegistry instance;
+        return instance;
+    }
+
+    void set(const std::string& layerId, bool on) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (on) {
+            ids.insert(layerId);
+        } else {
+            ids.erase(layerId);
+        }
+    }
+
+    bool contains(const std::string& layerId) const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return ids.count(layerId) > 0;
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::unordered_set<std::string> ids;
 };
 
 } // namespace util

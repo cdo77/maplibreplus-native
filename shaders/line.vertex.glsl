@@ -32,6 +32,13 @@ layout (std140) uniform LineDrawableUBO {
     lowp float u_offset_t;
     lowp float u_width_t;
     lowp float drawable_pad1;
+    highp float u_ecef_heightmap_scale;
+    lowp float ecef_pad0;
+    highp vec2 u_ecef_heightmap_offset;
+    highp float u_ecef_depth_b;
+    lowp float ecef_pad1;
+    lowp float ecef_pad2;
+    lowp float ecef_pad3;
 };
 
 layout (std140) uniform LineEvaluatedPropsUBO {
@@ -46,10 +53,39 @@ layout (std140) uniform LineEvaluatedPropsUBO {
     lowp float props_pad2;
 };
 
+uniform sampler2D u_ecef_heightmap;
+
+// Elevacion del terreno bajo un punto tile-local (ADR 0058), igual que los sprites (ADR 0038): bilineal a mano sobre el
+// mapa de alturas terrarium; fuera del mapa se toma 0.
+float ecef_height_texel(ivec2 p, ivec2 hi) {
+    vec3 rgb = texelFetch(u_ecef_heightmap, clamp(p, ivec2(0), hi), 0).rgb * 255.0;
+    return rgb.r * 256.0 + rgb.g + rgb.b / 256.0 - 32768.0;
+}
+
+float ecef_point_elevation(vec2 p) {
+    vec2 uv = p * u_ecef_heightmap_scale + u_ecef_heightmap_offset;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 0.0;
+    }
+    ivec2 dim = textureSize(u_ecef_heightmap, 0);
+    vec2 coord = uv * vec2(dim) - 0.5;
+    ivec2 c = ivec2(floor(coord));
+    vec2 f = fract(coord);
+    ivec2 hi = dim - 1;
+    float tl = ecef_height_texel(c, hi);
+    float tr = ecef_height_texel(c + ivec2(1, 0), hi);
+    float bl = ecef_height_texel(c + ivec2(0, 1), hi);
+    float br = ecef_height_texel(c + ivec2(1, 1), hi);
+    return mix(mix(tl, tr, f.x), mix(bl, br, f.x), f.y);
+}
+
 out vec2 v_normal;
 out vec2 v_width2;
 out float v_gamma_scale;
 out highp float v_linesofar;
+// Posicion tile-local del punto de la linea (ADR 0058): el pase de la camara real no recorta por stencil, asi que el fragmento
+// recorta cada tesela a su propia extension; sin esto se ven los bordes del buffer del GeoJSON como cuadrados. 4096 = adentro.
+out vec2 v_tile_pos;
 
 #pragma mapbox: define highp vec4 color
 #pragma mapbox: define lowp float blur
@@ -114,4 +150,31 @@ void main() {
     v_gamma_scale = extrude_length_without_perspective / extrude_length_with_perspective;
 
     v_width2 = vec2(outset, inset);
+    v_tile_pos = vec2(4096.0);
+
+    // Pase de lineas de la camara real (ADR 0058): la linea se pega al relieve punto a punto y el ancho se abre en PANTALLA
+    // (pixeles fijos), perpendicular a la linea proyectada; con profundidad contra la malla. Sin drapes: sin bordes dobles.
+    if (u_ecef_heightmap_scale > 0.0) {
+        v_tile_pos = pos;
+        float el = ecef_point_elevation(pos) + 0.5;
+        vec4 c0 = u_matrix * vec4(pos, el, 1.0);
+        vec2 ex = a_extrude * scale;
+        float exl = length(ex);
+        vec2 ed = exl > 0.0001 ? ex / exl : vec2(0.0, 1.0);
+        vec4 c1 = u_matrix * vec4(pos + ed * 64.0, el, 1.0);
+        vec2 s_px = (c1.xy / c1.w - c0.xy / c0.w) * u_units_to_pixels;
+        float sl = length(s_px);
+        vec2 dir_px = sl > 0.000001 ? s_px / sl : vec2(0.0);
+        vec2 e_px = dir_px * outset * exl;
+        gl_Position = c0;
+        gl_Position.xy += (e_px / u_units_to_pixels) * c0.w;
+        v_gamma_scale = 1.0;
+        // Como los sprites: se adelanta unos pixeles hacia la camara para no enterrarse en la malla.
+        float half_height_px = abs(u_units_to_pixels.y);
+        float sd = max(1.0 - 8.0 * 0.41421356 / half_height_px, 0.05);
+        gl_Position.z = (sd * (c0.z - u_ecef_depth_b) + u_ecef_depth_b) / sd;
+        if (c0.w <= 0.0) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        }
+    }
 }

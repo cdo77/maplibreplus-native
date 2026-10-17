@@ -369,6 +369,12 @@ enum {
 };
 
 enum {
+    // Mapa de alturas del terreno para las lineas del pase de la camara real (ADR 0058).
+    idLineEcefHeightmapTexture,
+    lineEcefTextureCount
+};
+
+enum {
     idSymbolImageTexture,
     idSymbolImageIconTexture,
     // Mapa de alturas del terreno para los iconos 3D con camara real (ADR 0038).

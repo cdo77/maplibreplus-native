@@ -157,6 +157,9 @@ public:
     void setSpriteAltitude(jni::JNIEnv&, const jni::String&, jni::jdouble, jni::jfloat, jni::jboolean);
     void clearSpriteAltitude(jni::JNIEnv&, const jni::String&);
 
+    // Capa de linea dibujada en el pase propio de la camara real (ADR 0058). Ver mln::util::EcefLineRegistry.
+    void setEcefLine(jni::JNIEnv&, const jni::String&, jni::jboolean);
+
     jni::jboolean isRealAltitudeModeEnabled(jni::JNIEnv&);
 
     void setZoom(jni::JNIEnv&, jni::jdouble, jni::jdouble, jni::jdouble, jni::jlong);

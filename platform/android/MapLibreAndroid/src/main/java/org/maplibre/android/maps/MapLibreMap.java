@@ -354,6 +354,14 @@ public final class MapLibreMap {
   }
 
   /**
+   * Dibuja la capa de linea (simple) en el pase propio de la camara real: ancho en pixeles fijos, pegada al relieve y con
+   * profundidad contra la malla, sin los bordes dobles/borrosos de los drapes del terreno (ADR 0058). Opt-in por capa.
+   */
+  public void setEcefLine(@NonNull String layerId, boolean on) {
+    nativeMapView.setEcefLine(layerId, on);
+  }
+
+  /**
    * @return true si el modo de camara con altura real esta activo
    * @see MapLibreMap#setRealAltitudeMode(boolean, double)
    */

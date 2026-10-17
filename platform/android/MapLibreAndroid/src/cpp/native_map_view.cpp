@@ -527,6 +527,11 @@ void NativeMapView::setSpriteAltitude(
     map->triggerRepaint();
 }
 
+void NativeMapView::setEcefLine(jni::JNIEnv& env, const jni::String& layerId, jni::jboolean on) {
+    mln::util::EcefLineRegistry::get().set(jni::Make<std::string>(env, layerId), on);
+    map->triggerRepaint();
+}
+
 void NativeMapView::clearSpriteAltitude(jni::JNIEnv& env, const jni::String& layerId) {
     mln::util::SpriteAltitudeRegistry::get().clear(jni::Make<std::string>(env, layerId));
     map->triggerRepaint();
@@ -1458,6 +1463,7 @@ void NativeMapView::registerNative(jni::JNIEnv& env) {
         METHOD(&NativeMapView::setRealAltitudeMode, "nativeSetRealAltitudeMode"),
         METHOD(&NativeMapView::setSpriteAltitude, "nativeSetSpriteAltitude"),
         METHOD(&NativeMapView::clearSpriteAltitude, "nativeClearSpriteAltitude"),
+        METHOD(&NativeMapView::setEcefLine, "nativeSetEcefLine"),
         METHOD(&NativeMapView::isRealAltitudeModeEnabled, "nativeIsRealAltitudeModeEnabled"),
         METHOD(&NativeMapView::getZoom, "nativeGetZoom"),
         METHOD(&NativeMapView::setZoom, "nativeSetZoom"),

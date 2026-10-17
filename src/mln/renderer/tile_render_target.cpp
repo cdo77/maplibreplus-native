@@ -1,3 +1,4 @@
+#include <mln/util/sprite_altitude.hpp>
 #include <mln/renderer/tile_render_target.hpp>
 
 #include <mln/gfx/context.hpp>
@@ -112,8 +113,11 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     //    Tampoco se corren sus tweakers aca: pisarian los UBO que usa el pase de sprites.
     const bool isDrape = geographicArea.has_value();
     const auto skipLayerGroup = [&](const LayerGroupBase& layerGroup) {
+        // Lineas registradas (ADR 0058): van en su propio pase con pixeles fijos, no en los drapes (sin bordes dobles).
         return isDrape && (orchestrator.layerGroupIsType(layerGroup, "background") ||
-                           orchestrator.layerGroupIsType(layerGroup, "symbol"));
+                           orchestrator.layerGroupIsType(layerGroup, "symbol") ||
+                           (orchestrator.layerGroupIsType(layerGroup, "line") &&
+                            util::EcefLineRegistry::get().contains(layerGroup.getName())));
     };
 
     parameters.currentLayer = 0;

@@ -23,9 +23,18 @@ struct alignas(16) LineDrawableUBO {
     /* 84 */ float offset_t;
     /* 88 */ float width_t;
     /* 92 */ float pad1;
-    /* 96 */
+    // Linea del pase de la camara real (ADR 0058): UV del mapa de alturas y termino de profundidad, como los sprites.
+    // Escala 0 = modo normal.
+    /* 96 */ float ecef_heightmap_scale;
+    /* 100 */ float ecef_pad0;
+    /* 104 */ std::array<float, 2> ecef_heightmap_offset;
+    /* 112 */ float ecef_depth_b;
+    /* 116 */ float ecef_pad1;
+    /* 120 */ float ecef_pad2;
+    /* 124 */ float ecef_pad3;
+    /* 128 */
 };
-static_assert(sizeof(LineDrawableUBO) == 6 * 16);
+static_assert(sizeof(LineDrawableUBO) == 8 * 16);
 
 //
 // Line gradient

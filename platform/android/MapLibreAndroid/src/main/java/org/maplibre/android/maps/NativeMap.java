@@ -84,6 +84,8 @@ interface NativeMap {
 
   void clearSpriteAltitude(@NonNull String layerId);
 
+  void setEcefLine(@NonNull String layerId, boolean on);
+
   boolean isRealAltitudeModeEnabled();
 
   void setZoom(double zoom, @NonNull PointF focalPoint, long duration);
