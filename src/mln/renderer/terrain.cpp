@@ -449,10 +449,18 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
 
     // Superficie por celda (ADR 0059, plan E2): con SurfaceMode >= 1 las celdas visibles se renderizan a su pool de texturas (en F2 solo se mide; el terreno sigue con los drapes).
     {
+        const double screenLambda = (viewSize.height * static_cast<double>(pixelRatio) / 2.0) / std::tan(TransformState::kEcefFieldOfViewRad / 2.0);
         std::vector<util::surface::VisibleCell> visibleCells;
         visibleCells.reserve(subTiles.size());
         for (const SubTile& st : subTiles) {
-            visibleCells.push_back({util::surface::CellKey{st.id.canonical.z, st.id.canonical.x, st.id.canonical.y, st.id.wrap}, -st.prio});
+            // Lado de la celda en pixeles de pantalla (en su punto mas cercano): lambda * lado_m / distancia. El lado sale de la latitud del centro de la celda.
+            const double tiles = static_cast<double>(1ull << st.id.canonical.z);
+            const double lat = std::atan(std::sinh(M_PI * (1.0 - 2.0 * (st.id.canonical.y + 0.5) / tiles)));
+            const double sideM = 2.0 * M_PI * util::EARTH_RADIUS_M * std::cos(lat) / tiles;
+            const double distanceM = -st.prio;
+            visibleCells.push_back({util::surface::CellKey{st.id.canonical.z, st.id.canonical.x, st.id.canonical.y, st.id.wrap},
+                                    distanceM,
+                                    ecefCamera ? screenLambda * sideM / std::max(distanceM, 1.0) : 0.0});
         }
         updateSurfaceCells(context, visibleCells, surfaceTiles, changes);
     }

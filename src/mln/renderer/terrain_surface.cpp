@@ -91,11 +91,15 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                          std::to_string(st.peakBytes / (1024.0 * 1024.0)) + " creaciones=" + std::to_string(st.creations) + " reusos=" +
                          std::to_string(st.reuses) + " expulsiones=" + std::to_string(st.evictions) + " destruidas=" + std::to_string(st.destroyed) +
                          " fuera_de_tope=" + std::to_string(st.overBudgetFrames) + " targets=" + std::to_string(cellTargets.size()) +
+                         " usa_propia=" + std::to_string(surfaceUsedOwn) + " usa_ancestro=" + std::to_string(surfaceUsedAncestor) + " usa_ninguna=" +
+                         std::to_string(surfaceUsedNone) + " max_niveles_arriba=" + std::to_string(surfaceMaxLevelsUp) +
                          " pasadas=" + std::to_string(passes.passes) + " ms_por_pasada=" +
                          std::to_string(passes.passes ? passes.totalMicros / 1000.0 / static_cast<double>(passes.passes) : 0.0) + " ms_max_pasada=" +
                          std::to_string(passes.maxMicros / 1000.0));
         surfacePlannedWindow = 0;
         surfaceWindowFrames = 0;
+        surfaceUsedOwn = surfaceUsedAncestor = surfaceUsedNone = 0;
+        surfaceMaxLevelsUp = 0;
     }
 }
 
@@ -113,7 +117,16 @@ std::optional<RenderTerrain::SurfaceCellChoice> RenderTerrain::chooseSurfaceCell
         source = source.parent();
         entry = usable(source);
     }
-    if (!entry) return std::nullopt;
+    if (!entry) {
+        ++surfaceUsedNone;
+        return std::nullopt;
+    }
+    if (source.z == key.z) {
+        ++surfaceUsedOwn;
+    } else {
+        ++surfaceUsedAncestor;
+        surfaceMaxLevelsUp = std::max<unsigned>(surfaceMaxLevelsUp, key.z - source.z);
+    }
 
     // tile-local del sub-tile -> UV de la celda fuente. El render target proyecta el tile con ortho(x0, x1, y1, y0): norte = v 1 (igual que los drapes).
     // Con f sub-tiles por lado de la fuente: u = (x - ax*f + lx/EXTENT)/f ; v = 1 - (y - ay*f + ly/EXTENT)/f.
@@ -128,7 +141,7 @@ std::optional<RenderTerrain::SurfaceCellChoice> RenderTerrain::chooseSurfaceCell
     m[12] = static_cast<float>(bx);
     m[13] = static_cast<float>(1.0 - by);
     m[15] = 1.0f;
-    return SurfaceCellChoice{cellTargets.at(entry->slotId)->getTexture(), m};
+    return SurfaceCellChoice{cellTargets.at(entry->slotId)->getTexture(), m, static_cast<unsigned>(key.z - source.z)};
 }
 
 void RenderTerrain::teardownSurfaceCells(UniqueChangeRequestVec& changes) {

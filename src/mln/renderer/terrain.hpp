@@ -117,6 +117,7 @@ private:
     struct SurfaceCellChoice {
         gfx::Texture2DPtr texture;
         std::array<float, 16> matrix;
+        unsigned levelsUp = 0;   // 0 = la propia celda; N = el ancestro N niveles arriba (borroso: cada nivel pierde la mitad de resolucion)
     };
     std::optional<SurfaceCellChoice> chooseSurfaceCell(const util::surface::CellKey& key) const;
 
@@ -126,6 +127,11 @@ private:
     std::map<uint32_t, TileRenderTargetPtr> cellTargets;   // textura (slot del pool) -> su render target
     uint64_t surfaceFrame = 0;
     std::vector<OverscaledTileID> surfaceTilesPrev;       // teselas de imagen del cuadro anterior (ordenadas): la diferencia ensucia celdas
+    // Que textura uso cada sub-tile en la ventana de estadisticas: propia / ancestro / ninguna (solo drapes). Sirve para ver si un respaldo se queda pegado.
+    mutable size_t surfaceUsedOwn = 0;
+    mutable size_t surfaceUsedAncestor = 0;
+    mutable size_t surfaceUsedNone = 0;
+    mutable unsigned surfaceMaxLevelsUp = 0;
     size_t surfacePlannedWindow = 0;                       // celdas planificadas en la ventana de estadisticas
     uint64_t surfaceWindowFrames = 0;
 

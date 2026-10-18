@@ -94,7 +94,7 @@ struct PoolConfig {
     size_t capBytes = 256u * 1024u * 1024u;        // D2: techo de memoria de las texturas de superficie
     unsigned bytesPerPixel = 2;                     // RGB565, como ATAK (RGBA8 = 4)
     size_t reuseLimitBytes = 2u * 1024u * 1024u;    // pool de reuso de ATAK (`MT_POOL_LIMIT`)
-    uint32_t maxTilePx = 512;                       // D4
+    uint32_t maxTilePx = 1024;                      // D4: 512 y se prueba 1024 si de cerca sigue corto; con el tamaño por pantalla (F4) el tope sube a 1024 (el tope de memoria lo cuida)
     uint32_t minTilePx = 32;
     unsigned maxMip = 4;
     // Frames sin pedir una celda antes de expulsarla AUNQUE haya lugar bajo el tope (0 = sin retención por edad: caché LRU que se llena hasta el tope). ATAK no guarda lo que no
@@ -145,6 +145,7 @@ public:
                 e.slotId = allocateSlot(sizePx);
                 bytes_ += bytesFor(sizePx);
                 e.state = CellState::Dirty;
+                e.renderedAtMs = 0;   // la textura nueva esta vacia: no se puede mostrar hasta renderizarla
                 peak();
             }
             return e;
@@ -359,6 +360,7 @@ private:
 struct VisibleCell {
     CellKey key;
     double distanceM = 0.0;
+    double screenPx = 0.0;   // lado de la celda en pixeles de pantalla (en su punto mas cercano); 0 = desconocido: el tamaño sale del mip como en ATAK
 };
 
 /// Una celda que hay que (re)renderizar este frame.
@@ -373,6 +375,9 @@ struct SchedulerConfig {
     double budgetMs = 5.0;          // D3: 5 ms por frame
     double msPerMegapixel = 10.0;   // costo estimado de una pasada: medido en la F2 en el S25 Ultra con la GPU sincronizada, ~2,7 ms por celda de 512 px (0,26 Mpx) = ~10 ms/Mpx
     size_t maxItems = 64;
+    uint32_t sourceTilePx = 256;    // lado de las teselas de imagen de la fuente
+    int sourceMaxZoom = 19;         // zoom maximo de la fuente: mas texels que los nativos no agregan detalle
+    double oversample = 1.0;        // texels de la celda por pixel de pantalla (1 = nitido sin desperdicio)
     int64_t refreshMs = 3000;       // refresco periódico como ATAK (D3: 3 s): lo que no es imagen (capas del usuario, geocercas) no tiene invalidación precisa y se actualiza por aquí
 };
 
@@ -407,6 +412,21 @@ public:
         std::vector<unsigned> mips;
         sizes.reserve(visible.size());
         for (const VisibleCell& v : visible) {
+            if (v.screenPx > 0.0) {
+                // Tamaño por pantalla (F4): una potencia de 2 >= los pixeles que ocupa la celda, sin pasar de los texels nativos de la imagen ni del tope.
+                const double native = v.key.z <= config_.sourceMaxZoom ? static_cast<double>(config_.sourceTilePx) * static_cast<double>(1ull << (config_.sourceMaxZoom - v.key.z))
+                                                                       : std::max(1.0, static_cast<double>(config_.sourceTilePx) / static_cast<double>(1ull << std::min(30, v.key.z - config_.sourceMaxZoom)));
+                const double want = std::min(v.screenPx * config_.oversample, native);
+                uint32_t size = pc.minTilePx;
+                while (size < pc.maxTilePx && static_cast<double>(size) < want) size <<= 1;
+                // Histeresis: si la celda ya tiene una textura de entre 1x y 2x el tamaño buscado, se conserva (evita rehacerla por oscilar en el borde de un escalon).
+                if (const Entry* existing = pool.find(v.key); existing && existing->sizePx >= size && existing->sizePx <= size * 2u) size = existing->sizePx;
+                unsigned mip = 0;
+                while ((pc.maxTilePx >> mip) > size && mip < 16) ++mip;
+                mips.push_back(mip);
+                sizes.push_back(size);
+                continue;
+            }
             const unsigned mip = mipFor(v.key.z, level0, pc.maxMip);
             mips.push_back(mip);
             sizes.push_back(sizeForMip(mip, pc.maxTilePx, pc.minTilePx));
