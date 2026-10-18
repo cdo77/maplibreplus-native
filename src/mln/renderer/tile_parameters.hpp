@@ -49,6 +49,10 @@ public:
     // tiles a los de la camara real (nunca los reemplaza): cada drape tiene imagen real de la
     // zona/resolucion que cubre, como cada render pass offscreen de ATAK.
     std::vector<std::shared_ptr<const TransformState>> drapeTransformStates;
+
+    // Superficie por celda (ADR 0059, plan P4): con SurfaceMode >= 5 las teselas de imagen las piden las CELDAS visibles del terreno (cada una, al zoom que su textura necesita) en vez de
+    // los coverings de los drapes (que retenian cientos de teselas de zonas que no se ven). Vacio = camino de siempre. Lo llena RenderOrchestrator; TilePyramid::update lo usa solo para Raster.
+    std::vector<OverscaledTileID> surfaceTileHints;
 };
 
 } // namespace mln

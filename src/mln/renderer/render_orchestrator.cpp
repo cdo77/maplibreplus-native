@@ -8,6 +8,11 @@
 #include <mln/renderer/render_layer.hpp>
 #include <mln/renderer/render_static_data.hpp>
 #include <mln/renderer/render_tree.hpp>
+#include <mln/renderer/terrain_ecef_lod.hpp>
+#include <mln/util/surface_mode.hpp>
+#include <mln/util/constants.hpp>
+#include <mln/util/geo.hpp>
+#include <mln/util/projection.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/renderer/upload_parameters.hpp>
 #include <mln/renderer/pattern_atlas.hpp>
@@ -201,6 +206,37 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
     }
 
+    // Teselas de imagen que piden las celdas visibles (plan P4, SurfaceMode >= 5). Las celdas se eligen con el mismo LOD del terreno pero sin DEM (planas): alcanza para saber que zona y a que
+    // resolucion se ve. Cada celda necesita imagen al zoom que da su textura (pixeles que ocupa en pantalla, tope 1024): dz = ceil(log2(px / 256)) niveles bajo el de la celda.
+    std::vector<OverscaledTileID> surfaceTileHints;
+    if (util::SurfaceMode::instance().value() >= 5 && updateParameters->transformState.isRealAltitudeModeEnabled()) {
+        const TransformState& state = updateParameters->transformState;
+        const TransformState::EcefCamera ecef = state.computeEcefCamera(0.0);
+        EcefLodCamera lodCamera;
+        lodCamera.originEcef = ecef.eyeEcef;
+        const Point<double> eyeMercator = Projection::project(ecef.eyeLatLng, 1.0) / util::tileSize_D;
+        lodCamera.mercatorX = eyeMercator.x;
+        lodCamera.mercatorY = eyeMercator.y;
+        lodCamera.focusMercatorX = (Projection::project(ecef.focus, 1.0) / util::tileSize_D).x;
+        lodCamera.farM = ecef.farM;
+        lodCamera.lambda = (state.getSize().height * static_cast<double>(updateParameters->pixelRatio) / 2.0) / std::tan(TransformState::kEcefFieldOfViewRad / 2.0);
+        lodCamera.viewProjRte = state.getEcefTileMatrix(lodCamera.originEcef, ecef);
+        const EcefLodResult lod = selectEcefTerrainCells(lodCamera, EcefDemIndex{});
+        for (const EcefLodCell& cell : lod.cells) {
+            const double sideM = 2.0 * M_PI * util::EARTH_RADIUS_M *
+                                 std::cos(std::atan(std::sinh(M_PI * (1.0 - 2.0 * (cell.tile.y + 0.5) / std::pow(2.0, cell.tile.z))))) / std::pow(2.0, cell.tile.z);
+            const double screenPx = lodCamera.lambda * sideM / std::max(cell.distanceM, 1.0);
+            const unsigned dz = static_cast<unsigned>(std::clamp(std::ceil(std::log2(std::max(std::min(screenPx, 1024.0), 1.0) / 256.0)), 0.0, 3.0));
+            const unsigned side = 1u << dz;
+            for (unsigned dy = 0; dy < side; ++dy) {
+                for (unsigned dx = 0; dx < side; ++dx) {
+                    const auto z = static_cast<uint8_t>(cell.tile.z + dz);
+                    surfaceTileHints.emplace_back(z, cell.wrap, z, (cell.tile.x << dz) + dx, (cell.tile.y << dz) + dy);
+                }
+            }
+        }
+    }
+
     TileParameters tileParameters{.pixelRatio = updateParameters->pixelRatio,
                                   .debugOptions = updateParameters->debugOptions,
                                   .transformState = updateParameters->transformState,
@@ -217,7 +253,8 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                                   .tileLodZoomShift = updateParameters->tileLodZoomShift,
                                   .tileLodMode = updateParameters->tileLodMode,
                                   .dynamicTextureAtlas = dynamicTextureAtlas,
-                                  .drapeTransformStates = drapeTransformStates};
+                                  .drapeTransformStates = drapeTransformStates,
+                                  .surfaceTileHints = std::move(surfaceTileHints)};
 
     glyphManager->setURL(updateParameters->glyphURL);
     glyphManager->setFontFaces(updateParameters->fontFaces);

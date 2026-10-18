@@ -178,7 +178,21 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     // que cada render pass offscreen de ATAK calcula sus propios tiles de imagen.
     if (type == SourceType::Raster && !parameters.drapeTransformStates.empty()) {
         std::set<OverscaledTileID> existingIdeal(idealTiles.begin(), idealTiles.end());
+        // Con las celdas activas (plan P4) la imagen la piden las celdas visibles: no se calculan los coverings de los drapes (retenian cientos de teselas de zonas fuera de pantalla).
+        const bool cellsDriveImagery = !parameters.surfaceTileHints.empty();
+        if (cellsDriveImagery) {
+            for (const OverscaledTileID& hint : parameters.surfaceTileHints) {
+                if (hint.canonical.z < zoomRange.min) continue;
+                OverscaledTileID id = hint;
+                if (hint.canonical.z > zoomRange.max) {
+                    const unsigned dz = hint.canonical.z - zoomRange.max;
+                    id = OverscaledTileID(zoomRange.max, hint.wrap, zoomRange.max, hint.canonical.x >> dz, hint.canonical.y >> dz);
+                }
+                if (existingIdeal.insert(id).second) idealTiles.push_back(id);
+            }
+        }
         for (const auto& drapeStatePtr : parameters.drapeTransformStates) {
+            if (cellsDriveImagery) break;
             const TransformState& drapeState = *drapeStatePtr;
             const double drapeZoom = util::clamp<double>(drapeState.getZoom(), zoomRange.min, zoomRange.max);
             // Hacia ARRIBA (nunca mas grueso que lo pedido, como ATAK): coveringZoomLevel redondea al mas cercano para

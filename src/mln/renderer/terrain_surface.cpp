@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iterator>
+#include <map>
 #include <string>
 
 namespace mln {
@@ -83,6 +84,13 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
     if (++surfaceWindowFrames >= 120) {
         const auto& st = surfacePool.stats();
         const auto passes = util::SurfaceStats::instance().takeWindow();
+        // Reconocimiento de memoria (plan P4): teselas de imagen retenidas por nivel de zoom y su peso estimado como RGBA8 de 256x256 (256 KB c/u, como las sube el motor).
+        std::string tilesPerZ;
+        {
+            std::map<int, size_t> byZ;
+            for (const OverscaledTileID& t : surfaceTilesPrev) ++byZ[t.canonical.z];
+            for (const auto& [z, n] : byZ) tilesPerZ += "z" + std::to_string(z) + ":" + std::to_string(n) + " ";
+        }
         Log::Warning(Event::General,
                      "E2-CELDAS modo=" + std::to_string(util::SurfaceMode::instance().value()) + " visibles=" + std::to_string(visible.size()) +
                          " planificadas_por_frame=" + std::to_string(static_cast<double>(surfacePlannedWindow) / static_cast<double>(surfaceWindowFrames)) +
@@ -91,6 +99,7 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                          std::to_string(st.peakBytes / (1024.0 * 1024.0)) + " creaciones=" + std::to_string(st.creations) + " reusos=" +
                          std::to_string(st.reuses) + " expulsiones=" + std::to_string(st.evictions) + " destruidas=" + std::to_string(st.destroyed) +
                          " fuera_de_tope=" + std::to_string(st.overBudgetFrames) + " targets=" + std::to_string(cellTargets.size()) +
+                         " teselas_imagen=" + std::to_string(surfaceTilesPrev.size()) + " (~" + std::to_string(surfaceTilesPrev.size() / 4) + " MB) por_z=[" + tilesPerZ + "]" +
                          " usa_propia=" + std::to_string(surfaceUsedOwn) + " usa_ancestro=" + std::to_string(surfaceUsedAncestor) + " usa_ninguna=" +
                          std::to_string(surfaceUsedNone) + " max_niveles_arriba=" + std::to_string(surfaceMaxLevelsUp) +
                          " pasadas=" + std::to_string(passes.passes) + " ms_por_pasada=" +
