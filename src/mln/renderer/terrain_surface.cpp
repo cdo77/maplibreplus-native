@@ -6,6 +6,8 @@
 #include <mln/util/surface_mode.hpp>
 #include <mln/util/surface_stats.hpp>
 
+#include <mln/util/constants.hpp>
+
 #include <chrono>
 #include <string>
 
@@ -84,6 +86,38 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
         surfacePlannedWindow = 0;
         surfaceWindowFrames = 0;
     }
+}
+
+std::optional<RenderTerrain::SurfaceCellChoice> RenderTerrain::chooseSurfaceCell(const CellKey& key) const {
+    if (util::SurfaceMode::instance().value() < 2) return std::nullopt;
+
+    // Usable = ya se renderizo al menos una vez (renderedAtMs > 0): una celda sucia conserva su imagen vieja y se muestra hasta que llegue la nueva.
+    const auto usable = [&](const CellKey& k) -> const Entry* {
+        const Entry* e = surfacePool.find(k);
+        return e && e->renderedAtMs > 0 && cellTargets.count(e->slotId) ? e : nullptr;
+    };
+    CellKey source = key;
+    const Entry* entry = usable(source);
+    while (!entry && source.z > 0) {
+        source = source.parent();
+        entry = usable(source);
+    }
+    if (!entry) return std::nullopt;
+
+    // tile-local del sub-tile -> UV de la celda fuente. El render target proyecta el tile con ortho(x0, x1, y1, y0): norte = v 1 (igual que los drapes).
+    // Con f sub-tiles por lado de la fuente: u = (x - ax*f + lx/EXTENT)/f ; v = 1 - (y - ay*f + ly/EXTENT)/f.
+    const double f = static_cast<double>(1u << (key.z - source.z));
+    const double a = 1.0 / (util::EXTENT * f);
+    const double bx = (static_cast<double>(key.x) - static_cast<double>(source.x) * f) / f;
+    const double by = (static_cast<double>(key.y) - static_cast<double>(source.y) * f) / f;
+    std::array<float, 16> m{};
+    m[0] = static_cast<float>(a);
+    m[5] = static_cast<float>(-a);
+    m[10] = 1.0f;
+    m[12] = static_cast<float>(bx);
+    m[13] = static_cast<float>(1.0 - by);
+    m[15] = 1.0f;
+    return SurfaceCellChoice{cellTargets.at(entry->slotId)->getTexture(), m};
 }
 
 void RenderTerrain::teardownSurfaceCells(UniqueChangeRequestVec& changes) {

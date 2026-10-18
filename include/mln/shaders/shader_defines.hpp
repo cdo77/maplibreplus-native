@@ -395,6 +395,8 @@ enum {
     idTerrainDrape0Texture,
     idTerrainDrape1Texture,
     idTerrainDrape2Texture,
+    // Superficie por celda (ADR 0059, F3): textura de la celda (o del ancestro) que se superpone a los drapes.
+    idTerrainCellTexture,
     terrainTextureCount
 };
 

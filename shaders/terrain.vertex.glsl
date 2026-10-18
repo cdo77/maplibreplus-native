@@ -22,6 +22,12 @@ layout (std140) uniform TerrainDrawableUBO {
     lowp float u_cap_r; // color del casquete polar (solo lo lee el fragment); mismos nombres en ambas etapas
     lowp float u_cap_g;
     lowp float u_cap_b;
+    // Superficie por celda (ADR 0059, F3): tile-local -> UV de la textura de la celda; u_cell_valid solo lo lee el fragment.
+    highp mat4 u_cell_matrix;
+    lowp float u_cell_valid;
+    lowp float u_cell_pad0;
+    lowp float u_cell_pad1;
+    lowp float u_cell_pad2;
 };
 
 uniform sampler2D u_terrain_dem;
@@ -30,6 +36,7 @@ out vec2 v_texture_pos;
 out vec2 v_drape_uv0;
 out vec2 v_drape_uv1;
 out vec2 v_drape_uv2;
+out vec2 v_cell_uv;
 
 float terrain_texel_elevation(ivec2 pos) {
     vec4 rgb = (texelFetch(u_terrain_dem, pos, 0) * 255.0) * u_terrain_unpack;
@@ -65,6 +72,7 @@ void main() {
         v_drape_uv0 = (u_drape_matrix0 * local).xy;
         v_drape_uv1 = (u_drape_matrix1 * local).xy;
         v_drape_uv2 = (u_drape_matrix2 * local).xy;
+        v_cell_uv = (u_cell_matrix * local).xy;
         v_texture_pos = vec2(0.0);
     } else {
         gl_Position = u_matrix * vec4(a_pos3d.xy, elevation - ele_delta, 1.0);
@@ -73,5 +81,6 @@ void main() {
         v_drape_uv0 = vec2(0.0);
         v_drape_uv1 = vec2(0.0);
         v_drape_uv2 = vec2(0.0);
+        v_cell_uv = vec2(0.0);
     }
 }

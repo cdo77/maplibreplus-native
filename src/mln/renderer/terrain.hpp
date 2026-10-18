@@ -112,6 +112,14 @@ private:
                             UniqueChangeRequestVec& changes);
     void teardownSurfaceCells(UniqueChangeRequestVec& changes);
 
+    /// Celda que pinta el sub-tile `key` (F3): la propia si ya se renderizo alguna vez (aunque este sucia: se muestra la vieja hasta que llegue la nueva, sin
+    /// parpadeo) o la del ancestro mas cercano que lo cumpla. `matrix` lleva tile-local [0,EXTENT] del sub-tile -> UV de esa textura. Vacio con SurfaceMode < 2.
+    struct SurfaceCellChoice {
+        gfx::Texture2DPtr texture;
+        std::array<float, 16> matrix;
+    };
+    std::optional<SurfaceCellChoice> chooseSurfaceCell(const util::surface::CellKey& key) const;
+
     // RGBA8 (4 B/px) porque el render target de hoy no tiene RGB565 (que usa ATAK y es la mitad); se ajusta cuando haya formato.
     util::surface::SurfacePool surfacePool{util::surface::PoolConfig{256u * 1024u * 1024u, 4u}};
     util::surface::SurfaceScheduler surfaceScheduler;

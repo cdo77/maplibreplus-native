@@ -13,17 +13,24 @@ layout (std140) uniform TerrainDrawableUBO {
     lowp float u_cap_r; // color plano del casquete polar (u_ecef_mode == 2)
     lowp float u_cap_g;
     lowp float u_cap_b;
+    highp mat4 u_cell_matrix; // solo lo lee el vertex
+    lowp float u_cell_valid;
+    lowp float u_cell_pad0;
+    lowp float u_cell_pad1;
+    lowp float u_cell_pad2;
 };
 
 uniform sampler2D u_terrain_image;
 uniform sampler2D u_terrain_drape0;
 uniform sampler2D u_terrain_drape1;
 uniform sampler2D u_terrain_drape2;
+uniform sampler2D u_terrain_cell;
 
 in vec2 v_texture_pos;
 in vec2 v_drape_uv0;
 in vec2 v_drape_uv1;
 in vec2 v_drape_uv2;
+in vec2 v_cell_uv;
 
 // 1.0 si la UV cae dentro de [0,1] (el drape tiene dato ahi), 0.0 si no -- el mismo corte duro
 // por step() que usa ATAK para el alfa del terreno fuera de la captura offscreen.
@@ -66,6 +73,14 @@ void main() {
         vec4 fine = u_drape_global > 2.5 ? texture(u_terrain_drape0, drape_global_uv(v_drape_uv0))
                                          : texture(u_terrain_drape0, v_drape_uv0) * drape_inside(v_drape_uv0);
         color = color * (1.0 - fine.a) + fine;
+        // Superficie por celda (ADR 0059, F3): la textura de la celda (propia o la del ancestro limpio mas cercano) va ENCIMA de los drapes, "over"
+        // premultiplicado. Donde la celda no tiene imagen (alfa 0) se sigue viendo el drape: el respaldo nunca queda en blanco. La UV se recorta al
+        // centro de los texels de borde para que el filtro lineal no mezcle con el lado opuesto de la textura.
+        if (u_cell_valid > 0.5) {
+            vec2 half_texel = 0.5 / vec2(textureSize(u_terrain_cell, 0));
+            vec4 cell = texture(u_terrain_cell, clamp(v_cell_uv, half_texel, vec2(1.0) - half_texel));
+            color = color * (1.0 - cell.a) + cell;
+        }
         fragColor = color;
     } else {
         fragColor = texture(u_terrain_image, vec2(v_texture_pos.x, 1.0 - v_texture_pos.y));

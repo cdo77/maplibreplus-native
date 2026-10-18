@@ -16,7 +16,8 @@ public:
     TerrainDrawableData(int32_t dim_, std::array<float, 4> unpack_, float exaggeration_, float eleDelta_,
                         float demScale_ = 1.0f, float demOffsetX_ = 0.0f, float demOffsetY_ = 0.0f,
                         std::optional<vec3> ecefOrigin_ = std::nullopt,
-                        std::optional<std::array<float, 3>> capColor_ = std::nullopt)
+                        std::optional<std::array<float, 3>> capColor_ = std::nullopt,
+                        std::optional<std::array<float, 16>> cellMatrix_ = std::nullopt)
         : dim(dim_),
           unpack(unpack_),
           exaggeration(exaggeration_),
@@ -25,7 +26,8 @@ public:
           demOffsetX(demOffsetX_),
           demOffsetY(demOffsetY_),
           ecefOrigin(ecefOrigin_),
-          capColor(capColor_) {}
+          capColor(capColor_),
+          cellMatrix(cellMatrix_) {}
 
     int32_t dim;
     std::array<float, 4> unpack;
@@ -42,6 +44,8 @@ public:
     std::optional<vec3> ecefOrigin;
     // Casquete polar (mas alla de los +-85,0511 del mercator): color plano RGB, sin DEM ni drapes.
     std::optional<std::array<float, 3>> capColor;
+    // Superficie por celda (ADR 0059, F3): tile-local -> UV de la textura de celda que se le bindeo a este drawable; vacio = sin celda.
+    std::optional<std::array<float, 16>> cellMatrix;
 };
 
 using UniqueTerrainDrawableData = std::unique_ptr<TerrainDrawableData>;

@@ -30,9 +30,16 @@ struct alignas(16) TerrainDrawableUBO {
     /* 356 */ float cap_r;
     /* 360 */ float cap_g;
     /* 364 */ float cap_b;
-    /* 368 */
+    // Superficie por celda (ADR 0059, F3): tile-local de este sub-tile -> UV de la textura de la celda (propia o la del ancestro mas cercano).
+    // cell_valid = 1.0 solo con SurfaceMode >= 2 y celda disponible; con 0.0 el terreno sigue pintando solo con los drapes.
+    /* 368 */ std::array<float, 4 * 4> cell_matrix;
+    /* 432 */ float cell_valid;
+    /* 436 */ float cell_pad0;
+    /* 440 */ float cell_pad1;
+    /* 444 */ float cell_pad2;
+    /* 448 */
 };
-static_assert(sizeof(TerrainDrawableUBO) == 23 * 16);
+static_assert(sizeof(TerrainDrawableUBO) == 28 * 16);
 
 using TerrainDepthDrawableUBO = TerrainDrawableUBO;
 

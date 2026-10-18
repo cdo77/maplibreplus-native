@@ -543,6 +543,7 @@ const std::vector<TextureInfo> TerrainShaderInfo::textures = {
     TextureInfo{"u_terrain_drape0", idTerrainDrape0Texture},
     TextureInfo{"u_terrain_drape1", idTerrainDrape1Texture},
     TextureInfo{"u_terrain_drape2", idTerrainDrape2Texture},
+    TextureInfo{"u_terrain_cell", idTerrainCellTexture},
 };
 
 // Terrain Depth

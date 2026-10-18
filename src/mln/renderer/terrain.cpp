@@ -574,6 +574,11 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         for (size_t d = 0; d < drapes.size(); ++d) {
             builder->setTexture(drapes[d]->getTexture(), static_cast<size_t>(idTerrainDrape0Texture) + d);
         }
+        // Superficie por celda (ADR 0059, F3): con SurfaceMode >= 2 y celda disponible, su textura se superpone a los drapes; si no, la unidad queda con
+        // la textura plana (sin uso: cell_valid = 0).
+        const std::optional<SurfaceCellChoice> cell = chooseSurfaceCell(
+            util::surface::CellKey{st.id.canonical.z, st.id.canonical.x, st.id.canonical.y, st.id.wrap});
+        builder->setTexture(cell ? cell->texture : demTexture, idTerrainCellTexture);
 
         builder->flush(context);
 
@@ -581,7 +586,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
             drawable->setTileID(st.id);
             drawable->setData(std::make_unique<gfx::TerrainDrawableData>(
                 dem ? dem->dim : 1, dem ? dem->getUnpackVector() : std::array<float, 4>{}, st.flat ? 0.0f : exaggeration, eleDelta,
-                st.demScale, st.demOffsetX, st.demOffsetY, ecefOrigin));
+                st.demScale, st.demOffsetX, st.demOffsetY, ecefOrigin, std::nullopt,
+                cell ? std::optional<std::array<float, 16>>(cell->matrix) : std::nullopt));
             tileLayerGroup->addDrawable(RenderPass::Opaque, st.id, std::move(drawable));
         }
     }
@@ -625,6 +631,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         for (size_t d = 0; d < drapes.size(); ++d) {
             builder->setTexture(drapes[d]->getTexture(), static_cast<size_t>(idTerrainDrape0Texture) + d);
         }
+        builder->setTexture(flatDemTexture, idTerrainCellTexture);
         builder->flush(context);
         for (auto& drawable : builder->clearDrawables()) {
             drawable->setTileID(cap.id);
@@ -803,7 +810,12 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
                                                 .ecef_mode = data.capColor ? 2.0f : 1.0f,
                                                 .cap_r = data.capColor ? (*data.capColor)[0] : 0.0f,
                                                 .cap_g = data.capColor ? (*data.capColor)[1] : 0.0f,
-                                                .cap_b = data.capColor ? (*data.capColor)[2] : 0.0f};
+                                                .cap_b = data.capColor ? (*data.capColor)[2] : 0.0f,
+                                                .cell_matrix = data.cellMatrix ? *data.cellMatrix : std::array<float, 16>{},
+                                                .cell_valid = data.cellMatrix ? 1.0f : 0.0f,
+                                                .cell_pad0 = 0.0f,
+                                                .cell_pad1 = 0.0f,
+                                                .cell_pad2 = 0.0f};
 
         drawable.mutableUniformBuffers().createOrUpdate(idTerrainDrawableUBO, &drawableUBO, parameters.context);
     });
