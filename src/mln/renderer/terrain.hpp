@@ -63,7 +63,7 @@ public:
                 const TransformState&,
                 RenderSource* demSource,
                 float pixelRatio,
-                uint64_t surfaceGeneration,
+                const std::vector<OverscaledTileID>& surfaceTiles,
                 UniqueChangeRequestVec& changes);
 
     void teardown(UniqueChangeRequestVec& changes);
@@ -108,7 +108,7 @@ private:
     // F2: las celdas se renderizan a su pool de texturas pero el terreno sigue pintando con los drapes.
     void updateSurfaceCells(gfx::Context&,
                             const std::vector<util::surface::VisibleCell>&,
-                            uint64_t generation,
+                            const std::vector<OverscaledTileID>& surfaceTiles,
                             UniqueChangeRequestVec& changes);
     void teardownSurfaceCells(UniqueChangeRequestVec& changes);
 
@@ -125,7 +125,7 @@ private:
     util::surface::SurfaceScheduler surfaceScheduler;
     std::map<uint32_t, TileRenderTargetPtr> cellTargets;   // textura (slot del pool) -> su render target
     uint64_t surfaceFrame = 0;
-    uint64_t surfaceGeneration = 0;
+    std::vector<OverscaledTileID> surfaceTilesPrev;       // teselas de imagen del cuadro anterior (ordenadas): la diferencia ensucia celdas
     size_t surfacePlannedWindow = 0;                       // celdas planificadas en la ventana de estadisticas
     uint64_t surfaceWindowFrames = 0;
 

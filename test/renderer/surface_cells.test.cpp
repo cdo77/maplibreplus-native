@@ -223,6 +223,15 @@ TEST(SurfacePool, WithoutRetentionTheCacheFillsUpToTheCapAsBefore) {
     EXPECT_NE(pool.find(key(12, 0, 0)), nullptr);
 }
 
+TEST(SurfaceCells, CellOverlapsTileWhenOneIsAncestorOfTheOther) {
+    EXPECT_TRUE(cellOverlapsTile(12, 5, 7, 0, 12, 5, 7, 0));    // la misma
+    EXPECT_TRUE(cellOverlapsTile(12, 5, 7, 0, 10, 1, 1, 0));    // la tesela es ancestro de la celda (5>>2 = 1, 7>>2 = 1)
+    EXPECT_TRUE(cellOverlapsTile(10, 1, 1, 0, 12, 5, 7, 0));    // la celda es ancestro de la tesela
+    EXPECT_FALSE(cellOverlapsTile(12, 5, 7, 0, 12, 6, 7, 0));   // vecinas
+    EXPECT_FALSE(cellOverlapsTile(12, 5, 7, 0, 10, 2, 1, 0));   // otro ancestro
+    EXPECT_FALSE(cellOverlapsTile(12, 5, 7, 0, 12, 5, 7, 1));   // otra vuelta del mundo
+}
+
 TEST(SurfacePool, NearestCleanAncestorSkipsDirtyAndMissing) {
     SurfacePool pool;
     pool.beginFrame(1);
@@ -299,9 +308,11 @@ TEST(SurfaceScheduler, BudgetLimitsTheWorkPerFrameButAlwaysProgresses) {
     EXPECT_EQ(slow.plan(visible, pool2, 0).size(), 1u);
 }
 
-TEST(SurfaceScheduler, QuietCameraMeansZeroPassesAndRefreshIsOptIn) {
+TEST(SurfaceScheduler, QuietCameraMeansZeroPassesWithoutRefreshAndRefreshesEvery3sByDefault) {
     SurfacePool pool;
-    SurfaceScheduler sched;   // refreshMs = 0
+    SchedulerConfig noRefresh;
+    noRefresh.refreshMs = 0;
+    SurfaceScheduler sched(noRefresh);
     const auto visible = visibleRings(16, 0, 3, 4);
     uint64_t frame = 1;
     for (int guard = 0; guard < 200; ++guard, ++frame) {
@@ -314,9 +325,7 @@ TEST(SurfaceScheduler, QuietCameraMeansZeroPassesAndRefreshIsOptIn) {
     pool.beginFrame(frame + 1);
     EXPECT_TRUE(sched.plan(visible, pool, 1000 + 60000).empty());   // un minuto después, todo limpio: nada que hacer
 
-    SchedulerConfig withRefresh;
-    withRefresh.refreshMs = 3000;
-    SurfaceScheduler refreshing(withRefresh);
+    SurfaceScheduler refreshing;   // por defecto refresca cada 3 s (D3)
     pool.beginFrame(frame + 2);
     EXPECT_TRUE(refreshing.plan(visible, pool, 1000 + 2000).empty());
     EXPECT_FALSE(refreshing.plan(visible, pool, 1000 + 3500).empty());

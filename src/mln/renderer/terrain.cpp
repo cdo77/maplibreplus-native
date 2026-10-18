@@ -300,7 +300,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                            const TransformState& state,
                            RenderSource* demSource,
                            float pixelRatio,
-                           uint64_t surfaceGeneration_,
+                           const std::vector<OverscaledTileID>& surfaceTiles,
                            UniqueChangeRequestVec& changes) {
     // Motor 3D unico (ADR 0041): el terreno existe solo con la camara real orbital (ADR 0040). El terreno plano de
     // MapLibre (MegaTexture por celda, ADR 0034) se retiro.
@@ -454,7 +454,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
         for (const SubTile& st : subTiles) {
             visibleCells.push_back({util::surface::CellKey{st.id.canonical.z, st.id.canonical.x, st.id.canonical.y, st.id.wrap}, -st.prio});
         }
-        updateSurfaceCells(context, visibleCells, surfaceGeneration_, changes);
+        updateSurfaceCells(context, visibleCells, surfaceTiles, changes);
     }
 
     // Libera cachés de padres que ya no se ven.

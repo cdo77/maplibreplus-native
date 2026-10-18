@@ -70,6 +70,17 @@ inline std::optional<UvWindow> uvWindowInAncestor(const CellKey& cell, const Cel
 
 enum class CellState { Dirty, Clean };
 
+/// ¿La celda (z,x,y,wrap) y la tesela (tz,tx,ty,twrap) cubren alguna zona en común? Es cierto si una es ancestro (o igual) de la otra.
+inline bool cellOverlapsTile(uint8_t z, uint32_t x, uint32_t y, int16_t wrap, uint8_t tz, uint32_t tx, uint32_t ty, int16_t twrap) {
+    if (wrap != twrap) return false;
+    if (z <= tz) {
+        const unsigned d = tz - z;
+        return (tx >> d) == x && (ty >> d) == y;
+    }
+    const unsigned d = z - tz;
+    return (x >> d) == tx && (y >> d) == ty;
+}
+
 struct Entry {
     CellKey key;
     uint32_t sizePx = 0;
@@ -362,7 +373,7 @@ struct SchedulerConfig {
     double budgetMs = 5.0;          // D3: 5 ms por frame
     double msPerMegapixel = 10.0;   // costo estimado de una pasada: medido en la F2 en el S25 Ultra con la GPU sincronizada, ~2,7 ms por celda de 512 px (0,26 Mpx) = ~10 ms/Mpx
     size_t maxItems = 64;
-    int64_t refreshMs = 0;          // 0 = sin refresco periódico (ATAK: 3000 y marca todo sucio); con la invalidación precisa no hace falta
+    int64_t refreshMs = 3000;       // refresco periódico como ATAK (D3: 3 s): lo que no es imagen (capas del usuario, geocercas) no tiene invalidación precisa y se actualiza por aquí
 };
 
 /// Reduce los tamaños (de a un mip, empezando por los más grandes) hasta que entren en `capBytes`. Nunca baja de `minTilePx`.

@@ -8,7 +8,9 @@
 
 #include <mln/util/constants.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <string>
 
 namespace mln {
@@ -17,7 +19,7 @@ using namespace util::surface;
 
 void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                                        const std::vector<VisibleCell>& visible,
-                                       uint64_t generation,
+                                       const std::vector<OverscaledTileID>& surfaceTiles,
                                        UniqueChangeRequestVec& changes) {
     if (util::SurfaceMode::instance().value() <= 0) {
         if (!cellTargets.empty() || surfacePool.count() > 0) teardownSurfaceCells(changes);
@@ -29,10 +31,19 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
 
     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
-    // Sucio por llegada o cambio de teselas de imagen. En F2 es grueso (cualquier cambio ensucia todo): sirve para medir el peor caso; la F4 lo afina por tesela.
-    if (generation != surfaceGeneration) {
-        surfaceGeneration = generation;
-        surfacePool.markAllDirty();
+    // Sucio por tesela (F4): solo las celdas que se solapan con una tesela de imagen que llego o salio desde el cuadro anterior. Lo que no es imagen (capas del usuario,
+    // geocercas) se actualiza por el refresco periodico del planificador.
+    if (surfaceTiles != surfaceTilesPrev) {
+        std::vector<OverscaledTileID> changed;
+        std::set_symmetric_difference(
+            surfaceTilesPrev.begin(), surfaceTilesPrev.end(), surfaceTiles.begin(), surfaceTiles.end(), std::back_inserter(changed));
+        surfacePool.markDirtyIf([&](const CellKey& k) {
+            for (const OverscaledTileID& t : changed) {
+                if (cellOverlapsTile(k.z, k.x, k.y, k.wrap, t.canonical.z, t.canonical.x, t.canonical.y, t.wrap)) return true;
+            }
+            return false;
+        });
+        surfaceTilesPrev = surfaceTiles;
     }
 
     surfacePool.beginFrame(++surfaceFrame);
@@ -127,7 +138,7 @@ void RenderTerrain::teardownSurfaceCells(UniqueChangeRequestVec& changes) {
     cellTargets.clear();
     surfacePool = SurfacePool(PoolConfig{256u * 1024u * 1024u, 4u});
     surfaceFrame = 0;
-    surfaceGeneration = 0;
+    surfaceTilesPrev.clear();
     surfacePlannedWindow = 0;
     surfaceWindowFrames = 0;
 }
