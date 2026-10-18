@@ -119,7 +119,8 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     //  - Sin `symbol` (ADR 0038): los iconos van en el pase de sprites despues del terreno
     //    (renderer_impl), anclados al relieve y de tamano fijo; drapeados eran calcomanias gigantes.
     //    Tampoco se corren sus tweakers aca: pisarian los UBO que usa el pase de sprites.
-    const bool isDrape = geographicArea.has_value();
+    // Las celdas de la superficie por tile (ADR 0059, F3) llevan el mismo filtro: sin simbolos (se verian repetidos en cada textura), sin fondo y sin lineas registradas.
+    const bool isDrape = geographicArea.has_value() || cull.has_value();
     const auto skipLayerGroup = [&](const LayerGroupBase& layerGroup) {
         // Lineas registradas (ADR 0058): van en su propio pase con pixeles fijos, no en los drapes (sin bordes dobles).
         return isDrape && (orchestrator.layerGroupIsType(layerGroup, "background") ||
