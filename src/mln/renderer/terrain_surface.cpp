@@ -4,6 +4,7 @@
 #include <mln/util/logging.hpp>
 #include <mln/util/surface_cull.hpp>
 #include <mln/util/surface_mode.hpp>
+#include <mln/util/surface_stats.hpp>
 
 #include <chrono>
 #include <string>
@@ -68,6 +69,7 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
     // Estadisticas de la ventana (cada ~2 s a 60 fps): lo que la F2 tiene que medir.
     if (++surfaceWindowFrames >= 120) {
         const auto& st = surfacePool.stats();
+        const auto passes = util::SurfaceStats::instance().takeWindow();
         Log::Warning(Event::General,
                      "E2-CELDAS modo=" + std::to_string(util::SurfaceMode::instance().value()) + " visibles=" + std::to_string(visible.size()) +
                          " planificadas_por_frame=" + std::to_string(static_cast<double>(surfacePlannedWindow) / static_cast<double>(surfaceWindowFrames)) +
@@ -75,7 +77,10 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                          " reuso_mb=" + std::to_string(surfacePool.bytesInReusePool() / (1024.0 * 1024.0)) + " pico_mb=" +
                          std::to_string(st.peakBytes / (1024.0 * 1024.0)) + " creaciones=" + std::to_string(st.creations) + " reusos=" +
                          std::to_string(st.reuses) + " expulsiones=" + std::to_string(st.evictions) + " destruidas=" + std::to_string(st.destroyed) +
-                         " fuera_de_tope=" + std::to_string(st.overBudgetFrames) + " targets=" + std::to_string(cellTargets.size()));
+                         " fuera_de_tope=" + std::to_string(st.overBudgetFrames) + " targets=" + std::to_string(cellTargets.size()) +
+                         " pasadas=" + std::to_string(passes.passes) + " ms_por_pasada=" +
+                         std::to_string(passes.passes ? passes.totalMicros / 1000.0 / static_cast<double>(passes.passes) : 0.0) + " ms_max_pasada=" +
+                         std::to_string(passes.maxMicros / 1000.0));
         surfacePlannedWindow = 0;
         surfaceWindowFrames = 0;
     }

@@ -1,4 +1,9 @@
 #include <mln/util/sprite_altitude.hpp>
+#include <mln/util/surface_mode.hpp>
+#include <mln/util/surface_stats.hpp>
+#if MLN_RENDER_BACKEND_OPENGL
+#include <mln/gl/context.hpp>
+#endif
 #include <mln/renderer/tile_render_target.hpp>
 
 #include <mln/gfx/context.hpp>
@@ -12,6 +17,7 @@
 #include <mln/util/constants.hpp>
 #include <mln/util/projection.hpp>
 
+#include <chrono>
 #include <cmath>
 
 namespace mln {
@@ -83,6 +89,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
         return;
     }
     const util::SurfaceCullScope cullScope(cull ? &*cull : nullptr);
+    const auto passStart = std::chrono::steady_clock::now();
     const mat4 projMatrix = tileProjMatrix(parameters);
 
     parameters.renderPass = parameters.encoder->createRenderPass("tile render target",
@@ -161,6 +168,15 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     parameters.encoder->present(*offscreenTexture);
 
     parameters.scissorRect = prevScissorRect;
+
+    // Costo de la pasada por celda (plan E2, F2). Con SurfaceMode 3 se espera a la GPU para medir el tiempo real y no solo el de armar los comandos.
+    if (cull) {
+#if MLN_RENDER_BACKEND_OPENGL
+        if (util::SurfaceMode::instance().value() >= 3) static_cast<gl::Context&>(parameters.context).finish();
+#endif
+        util::SurfaceStats::instance().add(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - passStart).count());
+    }
 }
 
 } // namespace mln
