@@ -369,6 +369,8 @@ gfx::TexturePixelType Enum<gfx::TexturePixelType>::from(const platform::GLint va
             return gfx::TexturePixelType::Depth;
         case GL_LUMINANCE:
             return gfx::TexturePixelType::Luminance;
+        case GL_RGB:
+            return gfx::TexturePixelType::RGB;
         default:
             return {};
     }
@@ -387,6 +389,8 @@ platform::GLenum Enum<gfx::TexturePixelType>::to(const gfx::TexturePixelType val
             return GL_DEPTH_COMPONENT;
         case gfx::TexturePixelType::Luminance:
             return GL_LUMINANCE;
+        case gfx::TexturePixelType::RGB:
+            return GL_RGB;
     }
     return GL_INVALID_ENUM;
 }
@@ -398,6 +402,9 @@ platform::GLenum Enum<gfx::TexturePixelType>::sizedFor<>(const gfx::TexturePixel
     switch (type) {
         case gfx::TextureChannelDataType::UnsignedByte: {
             return Enum<gfx::TexturePixelType>::to(value);
+        }
+        case gfx::TextureChannelDataType::UnsignedShort565: {
+            return value == gfx::TexturePixelType::RGB ? GL_RGB : GL_INVALID_ENUM;
         }
         case gfx::TextureChannelDataType::HalfFloat: {
             switch (value) {
@@ -427,6 +434,8 @@ gfx::TextureChannelDataType Enum<gfx::TextureChannelDataType>::from(const platfo
     switch (value) {
         case GL_UNSIGNED_BYTE:
             return gfx::TextureChannelDataType::UnsignedByte;
+        case GL_UNSIGNED_SHORT_5_6_5:
+            return gfx::TextureChannelDataType::UnsignedShort565;
         case GL_HALF_FLOAT:
             return gfx::TextureChannelDataType::HalfFloat;
         case GL_FLOAT:
@@ -445,6 +454,8 @@ platform::GLenum Enum<gfx::TextureChannelDataType>::to(const gfx::TextureChannel
             return GL_HALF_FLOAT;
         case gfx::TextureChannelDataType::Float:
             return GL_FLOAT;
+        case gfx::TextureChannelDataType::UnsignedShort565:
+            return GL_UNSIGNED_SHORT_5_6_5;
     }
     return GL_INVALID_ENUM;
 }

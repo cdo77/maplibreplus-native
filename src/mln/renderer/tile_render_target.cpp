@@ -97,8 +97,8 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     // SurfaceMode 6 = lo mismo que 5 mas recorte por scissor de cada dibujable a la huella de su tesela (fase P2).
     const int surfaceMode = util::SurfaceMode::instance().value();
     // SurfaceMode 7 = lo mismo que 6 mas mipmaps y filtro anisotropico en la textura de la celda (fase P3).
-    const bool ownImagery = cullPtr && (surfaceMode >= 5 && surfaceMode <= 7);
-    const util::SurfaceClipScope clipScope(cullPtr && (surfaceMode == 6 || surfaceMode == 7) ? cullPtr : nullptr);
+    const bool ownImagery = cullPtr && (surfaceMode >= 5 && surfaceMode <= 8);
+    const util::SurfaceClipScope clipScope(cullPtr && (surfaceMode >= 6 && surfaceMode <= 8) ? cullPtr : nullptr);
     const auto cullScopeFor = [&](const LayerGroupBase& layerGroup) {
         return util::SurfaceCullScope(cullPtr && orchestrator.layerGroupIsType(layerGroup, "raster") ? cullPtr : nullptr);
     };

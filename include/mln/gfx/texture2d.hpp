@@ -55,6 +55,10 @@ public:
     /// @param image_ Image data to transfer
     virtual Texture2D& setImage(std::shared_ptr<PremultipliedImage> image_) noexcept = 0;
 
+    /// Pide subir la imagen como RGB565 (2 bytes por pixel en vez de 4) cuando no tiene transparencia: las teselas de imagen satelital (plan E2, P4; ATAK usa RGB565 en sus superficies).
+    /// Si la imagen tiene algun pixel no opaco se sube como RGBA8 igual. Por defecto no hace nada (otros backends).
+    virtual Texture2D& setPreferRGB565(bool) noexcept { return *this; }
+
     /// @brief Get the pixel format of the texture
     /// @return Pixel format of the texture
     virtual TexturePixelType getFormat() const noexcept = 0;

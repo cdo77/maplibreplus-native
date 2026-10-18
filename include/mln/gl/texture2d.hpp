@@ -22,6 +22,10 @@ public: // gfx::Texture2D
     Texture2D& setSamplerConfiguration(const SamplerState& samplerState) noexcept override;
 
     Texture2D& setFormat(gfx::TexturePixelType pixelFormat, gfx::TextureChannelDataType channelType) noexcept override;
+    Texture2D& setPreferRGB565(bool value) noexcept override {
+        preferRGB565 = value;
+        return *this;
+    }
 
     Texture2D& setSize(Size size_) noexcept override;
 
@@ -70,6 +74,7 @@ private:
     std::unique_ptr<UniqueTexture> texture;
 
     SamplerState samplerState{};
+    bool preferRGB565 = false;
     gfx::TexturePixelType pixelFormat{gfx::TexturePixelType::RGBA};
     gfx::TextureChannelDataType channelType{gfx::TextureChannelDataType::UnsignedByte};
 

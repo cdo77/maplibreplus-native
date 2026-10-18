@@ -107,6 +107,7 @@ enum class TexturePixelType : uint8_t {
     Stencil,   ///< Stencil
     Depth,     ///< Depth component
     Luminance, ///< Luminance
+    RGB,       ///< Red, Green and Blue (solo con UnsignedShort565)
 };
 
 /// Texture channel data type
@@ -114,6 +115,7 @@ enum class TextureChannelDataType : uint8_t {
     UnsignedByte, ///< 8 bit unsigned byte
     HalfFloat,    ///< 16 bit "half-float"
     Float,        ///< 32 bit float
+    UnsignedShort565, ///< 16 bits por pixel empaquetados 5-6-5 (solo con RGB)
 };
 
 /// Texture mip map type

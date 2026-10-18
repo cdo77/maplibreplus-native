@@ -5,6 +5,8 @@
 #include <mln/platform/gl_functions.hpp>
 #include <mln/util/instrumentation.hpp>
 
+#include <vector>
+
 namespace mln {
 namespace gl {
 
@@ -50,6 +52,8 @@ size_t Texture2D::getPixelStride() const noexcept {
     switch (channelType) {
         case gfx::TextureChannelDataType::UnsignedByte:
             return 1 * numChannels();
+        case gfx::TextureChannelDataType::UnsignedShort565:
+            return 2;
         case gfx::TextureChannelDataType::HalfFloat:
             return 2 * numChannels();
         case gfx::TextureChannelDataType::Float:
@@ -65,6 +69,8 @@ size_t Texture2D::numChannels() const noexcept {
             return 4;
         case gfx::TexturePixelType::Alpha:
             return 1;
+        case gfx::TexturePixelType::RGB:
+            return 3;
         default:
             return 0;
     }
@@ -196,6 +202,29 @@ void Texture2D::uploadSubRegion(const void* pixelData, const Size& size_, uint16
 
 void Texture2D::upload() {
     if (image && image->valid()) {
+        if (preferRGB565) {
+            // Imagen opaca (satelital) -> RGB565: mitad de memoria de GPU. Si algun pixel no es opaco se sube como RGBA8 (premultiplicada: perder el alfa cambiaria el color).
+            const size_t count = static_cast<size_t>(image->size.width) * image->size.height;
+            const uint8_t* src = image->data.get();
+            bool opaque = true;
+            for (size_t i = 0; i < count; ++i) {
+                if (src[i * 4 + 3] != 255) {
+                    opaque = false;
+                    break;
+                }
+            }
+            if (opaque) {
+                std::vector<uint16_t> packed(count);
+                for (size_t i = 0; i < count; ++i) {
+                    const uint8_t* px = src + i * 4;
+                    packed[i] = static_cast<uint16_t>(((px[0] >> 3) << 11) | ((px[1] >> 2) << 5) | (px[2] >> 3));
+                }
+                setFormat(gfx::TexturePixelType::RGB, gfx::TextureChannelDataType::UnsignedShort565);
+                upload(packed.data(), image->size);
+                image.reset();
+                return;
+            }
+        }
         setFormat(gfx::TexturePixelType::RGBA, gfx::TextureChannelDataType::UnsignedByte);
         upload(image->data.get(), image->size);
         image.reset();

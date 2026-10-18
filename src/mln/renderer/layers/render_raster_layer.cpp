@@ -1,4 +1,5 @@
 #include <mln/renderer/layers/render_raster_layer.hpp>
+#include <mln/util/surface_mode.hpp>
 #include <mln/renderer/buckets/raster_bucket.hpp>
 #include <mln/renderer/render_tile.hpp>
 #include <mln/renderer/paint_parameters.hpp>
@@ -160,6 +161,8 @@ void RenderRasterLayer::update(gfx::ShaderRegistry& shaders,
         if (bucket.image) {
             if (!bucket.texture2d) {
                 if (auto tex = context.createTexture2D()) {
+                    // Plan E2, P4 (SurfaceMode 8): teselas de imagen en RGB565, la mitad de memoria de GPU.
+                    tex->setPreferRGB565(util::SurfaceMode::instance().value() >= 8);
                     tex->setImage(bucket.image);
                     bucket.texture2d = std::move(tex);
                 }

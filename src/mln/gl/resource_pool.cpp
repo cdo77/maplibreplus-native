@@ -36,6 +36,8 @@ size_t Texture2DDesc::channelCount() const {
             return 1;
         case gfx::TexturePixelType::RGBA:
             return 4;
+        case gfx::TexturePixelType::RGB:
+            return 1; // un solo valor de 16 bits empaquetado (ver channelStorageSize)
         default:
             assert(!"Unknown texture pixel type");
             return 0;
@@ -50,6 +52,8 @@ size_t Texture2DDesc::channelStorageSize() const {
             return 2;
         case gfx::TextureChannelDataType::UnsignedByte:
             return 1;
+        case gfx::TextureChannelDataType::UnsignedShort565:
+            return 2;
         default:
             assert(!"Unknown texture channel data type");
             return 0;
