@@ -88,7 +88,12 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     if (!active) {
         return;
     }
-    const util::SurfaceCullScope cullScope(cull ? &*cull : nullptr);
+    // El recorte por celda se aplica SOLO a los grupos de imagen (raster), que retienen cientos de teselas; los grupos de vectores/GeoJSON (areas, geocercas, circulo de
+    // precision) tienen pocos dibujables y NO se recortan: con recorte sus rellenos no se dibujaban en la celda (medido en campo, F3; causa exacta sin determinar).
+    const util::SurfaceCull* const cullPtr = cull ? &*cull : nullptr;
+    const auto cullScopeFor = [&](const LayerGroupBase& layerGroup) {
+        return util::SurfaceCullScope(cullPtr && orchestrator.layerGroupIsType(layerGroup, "raster") ? cullPtr : nullptr);
+    };
     const auto passStart = std::chrono::steady_clock::now();
     const mat4 projMatrix = tileProjMatrix(parameters);
 
@@ -132,6 +137,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     parameters.currentLayer = 0;
     orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
         if (!skipLayerGroup(layerGroup)) {
+            const auto scope = cullScopeFor(layerGroup);
             layerGroup.runTweakers(renderTree, parameters);
         }
         parameters.currentLayer++;
@@ -143,6 +149,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     parameters.currentLayer = 0;
     orchestrator.visitLayerGroupsReversed([&](LayerGroupBase& layerGroup) {
         if (!skipLayerGroup(layerGroup)) {
+            const auto scope = cullScopeFor(layerGroup);
             layerGroup.render(orchestrator, parameters);
         }
         parameters.currentLayer++;
@@ -154,6 +161,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     parameters.currentLayer = layerGroupCount > 0 ? static_cast<uint32_t>(layerGroupCount) - 1 : 0;
     orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
         if (!skipLayerGroup(layerGroup)) {
+            const auto scope = cullScopeFor(layerGroup);
             layerGroup.render(orchestrator, parameters);
         }
         if (parameters.currentLayer > 0) {
