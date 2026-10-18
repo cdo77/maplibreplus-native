@@ -376,7 +376,7 @@ struct SchedulerConfig {
     double msPerMegapixel = 10.0;   // costo estimado de una pasada: medido en la F2 en el S25 Ultra con la GPU sincronizada, ~2,7 ms por celda de 512 px (0,26 Mpx) = ~10 ms/Mpx
     size_t maxItems = 64;
     uint32_t sourceTilePx = 256;    // lado de las teselas de imagen de la fuente
-    int sourceMaxZoom = 19;         // zoom maximo de la fuente: mas texels que los nativos no agregan detalle
+    int sourceMaxZoom = 21;         // zoom maximo de la fuente: mas texels que los nativos no agregan detalle
     double oversample = 1.0;        // texels de la celda por pixel de pantalla (1 = nitido sin desperdicio)
     int64_t refreshMs = 3000;       // refresco periódico como ATAK (D3: 3 s): lo que no es imagen (capas del usuario, geocercas) no tiene invalidación precisa y se actualiza por aquí
 };
