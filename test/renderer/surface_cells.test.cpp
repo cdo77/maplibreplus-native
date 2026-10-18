@@ -276,13 +276,20 @@ TEST(SurfaceScheduler, OrdersByMipThenDistanceAndStopsAtTheBudget) {
 TEST(SurfaceScheduler, BudgetLimitsTheWorkPerFrameButAlwaysProgresses) {
     SurfacePool pool;
     pool.beginFrame(1);
-    SchedulerConfig cfg;   // 5 ms, 2 ms por megapíxel: una celda de 512 px = 0,524 ms
+    SchedulerConfig cfg;
+    cfg.msPerMegapixel = 2.0;   // 5 ms y 2 ms por megapíxel: una celda de 512 px = 0,524 ms
     SurfaceScheduler sched(cfg);
     std::vector<VisibleCell> visible;
     for (uint32_t i = 0; i < 12; ++i) visible.push_back({key(15, i, 0), 10.0 + i});
     const auto plan = sched.plan(visible, pool, 0);
     EXPECT_EQ(plan.size(), 9u);              // 9 × 0,524 = 4,7 ms; la décima pasaría de 5
     EXPECT_EQ(plan.front().key, key(15, 0, 0));
+
+    SchedulerConfig calibrated;   // con el costo medido en la F2 (10 ms/Mpx) caben 1 o 2 celdas de 512 px en 5 ms
+    SurfaceScheduler real(calibrated);
+    SurfacePool pool3;
+    pool3.beginFrame(1);
+    EXPECT_EQ(real.plan(visible, pool3, 0).size(), 1u);   // 2,62 ms la primera; la segunda pasaría de 5 ms
 
     SchedulerConfig tiny;
     tiny.budgetMs = 0.1;                     // una celda sola supera el presupuesto: igual sale una por frame

@@ -360,7 +360,7 @@ struct PlanItem {
 
 struct SchedulerConfig {
     double budgetMs = 5.0;          // D3: 5 ms por frame
-    double msPerMegapixel = 2.0;    // costo estimado de renderizar una celda (se calibra con la F2)
+    double msPerMegapixel = 10.0;   // costo estimado de una pasada: medido en la F2 en el S25 Ultra con la GPU sincronizada, ~2,7 ms por celda de 512 px (0,26 Mpx) = ~10 ms/Mpx
     size_t maxItems = 64;
     int64_t refreshMs = 0;          // 0 = sin refresco periódico (ATAK: 3000 y marca todo sucio); con la invalidación precisa no hace falta
 };
