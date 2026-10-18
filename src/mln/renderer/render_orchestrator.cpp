@@ -36,6 +36,7 @@
 #include <mln/util/logging.hpp>
 
 #include <algorithm>
+#include <set>
 
 namespace mln {
 
@@ -235,6 +236,21 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                 }
             }
         }
+    }
+
+    // Base gruesa (plan P4): ademas de las teselas finas, cada una pide sus ancestros 2, 4 y 6 niveles arriba. Mientras llega la imagen fina (lectura de disco, decodificacion, subida a la GPU)
+    // las celdas dibujan debajo la gruesa, borrosa pero presente: sin esto la celda quedaba vacia (fondo oscuro) al moverse o cambiar de zoom, porque ya no hay drapes que cubran. Es el mismo
+    // principio de ATAK (conserva la tesela padre y la estira hasta que llega la hija). Se ordena de lo grueso a lo fino para que se pida y cargue primero.
+    if (!surfaceTileHints.empty()) {
+        std::set<OverscaledTileID> withBase(surfaceTileHints.begin(), surfaceTileHints.end());
+        for (const OverscaledTileID& hint : surfaceTileHints) {
+            for (const unsigned up : {2u, 4u, 6u}) {
+                if (hint.canonical.z < up + 3u) break;
+                const auto z = static_cast<uint8_t>(hint.canonical.z - up);
+                withBase.insert(OverscaledTileID(z, hint.wrap, z, hint.canonical.x >> up, hint.canonical.y >> up));
+            }
+        }
+        surfaceTileHints.assign(withBase.begin(), withBase.end());
     }
 
     TileParameters tileParameters{.pixelRatio = updateParameters->pixelRatio,
