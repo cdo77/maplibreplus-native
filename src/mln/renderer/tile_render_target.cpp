@@ -1,5 +1,6 @@
 #include <mln/util/sprite_altitude.hpp>
 #include <mln/util/surface_mode.hpp>
+#include <mln/renderer/surface_imagery_pass.hpp>
 #include <mln/util/surface_stats.hpp>
 #if MLN_RENDER_BACKEND_OPENGL
 #include <mln/gl/context.hpp>
@@ -91,6 +92,9 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     // El recorte por celda se aplica SOLO a los grupos de imagen (raster), que retienen cientos de teselas; los grupos de vectores/GeoJSON (areas, geocercas, circulo de
     // precision) tienen pocos dibujables y NO se recortan: con recorte sus rellenos no se dibujaban en la celda (medido en campo, F3; causa exacta sin determinar).
     const util::SurfaceCull* const cullPtr = cull ? &*cull : nullptr;
+    // SurfaceMode 5 = pasada propia de imagen base (plan pasada-propia-superficie, P1): la imagen se dibuja aparte, directo sobre la textura de la celda; los grupos de vectores
+    // siguen por el camino de capas.
+    const bool ownImagery = cullPtr && util::SurfaceMode::instance().value() == 5;
     const auto cullScopeFor = [&](const LayerGroupBase& layerGroup) {
         return util::SurfaceCullScope(cullPtr && orchestrator.layerGroupIsType(layerGroup, "raster") ? cullPtr : nullptr);
     };
@@ -113,6 +117,8 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     const mat4* prevOverride = parameters.projMatrixOverride;
     parameters.projMatrixOverride = &projMatrix;
 
+    if (ownImagery) surface_pass::drawImagery(orchestrator, parameters, *cull);
+
     parameters.context.bindGlobalUniformBuffers(*parameters.renderPass);
 
     const auto layerGroupCount = orchestrator.numLayerGroups();
@@ -127,6 +133,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     // Las celdas de la superficie por tile (ADR 0059, F3) llevan el mismo filtro: sin simbolos (se verian repetidos en cada textura), sin fondo y sin lineas registradas.
     const bool isDrape = geographicArea.has_value() || cull.has_value();
     const auto skipLayerGroup = [&](const LayerGroupBase& layerGroup) {
+        if (ownImagery && orchestrator.layerGroupIsType(layerGroup, "raster")) return true;
         // Lineas registradas (ADR 0058): van en su propio pase con pixeles fijos, no en los drapes (sin bordes dobles).
         return isDrape && (orchestrator.layerGroupIsType(layerGroup, "background") ||
                            orchestrator.layerGroupIsType(layerGroup, "symbol") ||
@@ -181,7 +188,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     // Costo de la pasada por celda (plan E2, F2). Con SurfaceMode 3 se espera a la GPU para medir el tiempo real y no solo el de armar los comandos.
     if (cull) {
 #if MLN_RENDER_BACKEND_OPENGL
-        if (util::SurfaceMode::instance().value() >= 3) static_cast<gl::Context&>(parameters.context).finish();
+        if (util::SurfaceMode::instance().value() == 3) static_cast<gl::Context&>(parameters.context).finish();
 #endif
         util::SurfaceStats::instance().add(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - passStart).count());
