@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mln/util/surface_cull.hpp>
 #include <mln/gfx/drawable.hpp>
 #include <mln/gfx/context.hpp>
 #include <mln/renderer/render_pass.hpp>
@@ -138,7 +139,12 @@ public:
     std::size_t visitDrawables(Func f) {
         assert(drawablesByTile.size() == sortedDrawables.size());
         unordered_set<gfx::Drawable*> drawablesFailed;
+        const util::SurfaceCull* cull = util::SurfaceCull::current();   // solo durante una pasada de superficie por celda (ADR 0059)
         for (auto* drawable : sortedDrawables) {
+            if (cull) {
+                const auto& tile = drawable->getTileID();
+                if (tile && !cull->intersects(*tile)) continue;
+            }
             try {
                 f(*drawable);
             } catch (...) {

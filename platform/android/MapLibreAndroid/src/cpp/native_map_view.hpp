@@ -160,6 +160,9 @@ public:
     // Capa de linea dibujada en el pase propio de la camara real (ADR 0058). Ver mln::util::EcefLineRegistry.
     void setEcefLine(jni::JNIEnv&, const jni::String&, jni::jboolean);
 
+    // Modo de la superficie del terreno 3D (ADR 0059, plan E2): 0 = drapes (por defecto), 1 = celdas en seco (F2), 2 = celdas (F3). Ver mln::util::SurfaceMode.
+    void setSurfaceMode(jni::JNIEnv&, jni::jint);
+
     jni::jboolean isRealAltitudeModeEnabled(jni::JNIEnv&);
 
     void setZoom(jni::JNIEnv&, jni::jdouble, jni::jdouble, jni::jdouble, jni::jlong);

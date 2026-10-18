@@ -13,6 +13,7 @@
 #include <mln/style/terrain.hpp>
 #include <mln/tile/tile_id.hpp>
 #include <mln/util/ecef.hpp>
+#include <mln/util/surface_cells.hpp>
 #include <mln/util/vectors.hpp>
 
 #include <array>
@@ -62,6 +63,7 @@ public:
                 const TransformState&,
                 RenderSource* demSource,
                 float pixelRatio,
+                uint64_t surfaceGeneration,
                 UniqueChangeRequestVec& changes);
 
     void teardown(UniqueChangeRequestVec& changes);
@@ -102,6 +104,23 @@ private:
         OverscaledTileID id{0, 0, 0};
     };
     void buildPolarCaps();
+    // Superficie por celda (ADR 0059, plan E2). Solo trabaja con `SurfaceMode` >= 1; con 0 no reserva nada.
+    // F2: las celdas se renderizan a su pool de texturas pero el terreno sigue pintando con los drapes.
+    void updateSurfaceCells(gfx::Context&,
+                            const std::vector<util::surface::VisibleCell>&,
+                            uint64_t generation,
+                            UniqueChangeRequestVec& changes);
+    void teardownSurfaceCells(UniqueChangeRequestVec& changes);
+
+    // RGBA8 (4 B/px) porque el render target de hoy no tiene RGB565 (que usa ATAK y es la mitad); se ajusta cuando haya formato.
+    util::surface::SurfacePool surfacePool{util::surface::PoolConfig{256u * 1024u * 1024u, 4u}};
+    util::surface::SurfaceScheduler surfaceScheduler;
+    std::map<uint32_t, TileRenderTargetPtr> cellTargets;   // textura (slot del pool) -> su render target
+    uint64_t surfaceFrame = 0;
+    uint64_t surfaceGeneration = 0;
+    size_t surfacePlannedWindow = 0;                       // celdas planificadas en la ventana de estadisticas
+    uint64_t surfaceWindowFrames = 0;
+
     std::array<PolarCap, 2> polarCaps; // [0] sur, [1] norte
     std::shared_ptr<TerrainIndexVector> polarCapIndices;
     SegmentVector polarCapSegments;

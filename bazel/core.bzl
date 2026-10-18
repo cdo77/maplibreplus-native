@@ -967,6 +967,7 @@ MLN_DRAWABLES_SOURCE = [
     "src/mln/renderer/globe.cpp",
     "src/mln/renderer/globe.hpp",
     "src/mln/renderer/terrain.cpp",
+    "src/mln/renderer/terrain_surface.cpp",
     "src/mln/renderer/terrain.hpp",
     "src/mln/renderer/terrain_ecef_lod.cpp",
     "src/mln/renderer/terrain_ecef_lod.hpp",

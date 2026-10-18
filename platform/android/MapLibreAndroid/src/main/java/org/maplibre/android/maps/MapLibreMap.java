@@ -362,6 +362,14 @@ public final class MapLibreMap {
   }
 
   /**
+   * Modo de la superficie (imagen) del terreno 3D (ADR 0059, plan E2): 0 = drapes (el de siempre, por defecto), 1 = celdas en seco (renderiza las celdas a un pool de
+   * texturas sin usarlas, para medir costo y memoria), 2 = celdas (el terreno muestra la superficie por celda). Se puede cambiar en caliente.
+   */
+  public void setSurfaceMode(int mode) {
+    nativeMapView.setSurfaceMode(mode);
+  }
+
+  /**
    * @return true si el modo de camara con altura real esta activo
    * @see MapLibreMap#setRealAltitudeMode(boolean, double)
    */

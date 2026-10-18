@@ -361,6 +361,14 @@ final class NativeMapView implements NativeMap {
   }
 
   @Override
+  public void setSurfaceMode(int mode) {
+    if (checkState("setSurfaceMode")) {
+      return;
+    }
+    nativeSetSurfaceMode(mode);
+  }
+
+  @Override
   public void setEcefLine(@NonNull String layerId, boolean on) {
     if (checkState("setEcefLine")) {
       return;
@@ -1553,6 +1561,8 @@ final class NativeMapView implements NativeMap {
   private native void nativeClearSpriteAltitude(@NonNull String layerId);
 
   private native void nativeSetEcefLine(@NonNull String layerId, boolean on);
+
+  private native void nativeSetSurfaceMode(int mode);
 
   @Keep
   private native boolean nativeIsRealAltitudeModeEnabled();

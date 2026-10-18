@@ -300,6 +300,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                            const TransformState& state,
                            RenderSource* demSource,
                            float pixelRatio,
+                           uint64_t surfaceGeneration_,
                            UniqueChangeRequestVec& changes) {
     // Motor 3D unico (ADR 0041): el terreno existe solo con la camara real orbital (ADR 0040). El terreno plano de
     // MapLibre (MegaTexture por celda, ADR 0034) se retiro.
@@ -445,6 +446,16 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
     // Ordena de lo cercano a lo lejano; sin tope: el LOD ya acota las celdas como ATAK (ADR 0039).
     std::sort(subTiles.begin(), subTiles.end(),
               [](const SubTile& a, const SubTile& b) { return a.prio > b.prio; });
+
+    // Superficie por celda (ADR 0059, plan E2): con SurfaceMode >= 1 las celdas visibles se renderizan a su pool de texturas (en F2 solo se mide; el terreno sigue con los drapes).
+    {
+        std::vector<util::surface::VisibleCell> visibleCells;
+        visibleCells.reserve(subTiles.size());
+        for (const SubTile& st : subTiles) {
+            visibleCells.push_back({util::surface::CellKey{st.id.canonical.z, st.id.canonical.x, st.id.canonical.y, st.id.wrap}, -st.prio});
+        }
+        updateSurfaceCells(context, visibleCells, surfaceGeneration_, changes);
+    }
 
     // Libera cachés de padres que ya no se ven.
     for (auto it = demTextures.begin(); it != demTextures.end();) {
@@ -713,6 +724,7 @@ void RenderTerrain::updateEcefHeightmap(gfx::Context& context, const TransformSt
 }
 
 void RenderTerrain::teardown(UniqueChangeRequestVec& changes) {
+    teardownSurfaceCells(changes);
     for (auto& drape : drapes) {
         if (drape) {
             changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(drape));

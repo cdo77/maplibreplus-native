@@ -1,4 +1,5 @@
 #include <mln/util/sprite_altitude.hpp>
+#include <mln/util/surface_mode.hpp>
 #include "native_map_view.hpp"
 
 #include <cstdlib>
@@ -529,6 +530,11 @@ void NativeMapView::setSpriteAltitude(
 
 void NativeMapView::setEcefLine(jni::JNIEnv& env, const jni::String& layerId, jni::jboolean on) {
     mln::util::EcefLineRegistry::get().set(jni::Make<std::string>(env, layerId), on);
+    map->triggerRepaint();
+}
+
+void NativeMapView::setSurfaceMode(jni::JNIEnv&, jni::jint mode) {
+    mln::util::SurfaceMode::instance().set(mode);
     map->triggerRepaint();
 }
 
@@ -1464,6 +1470,7 @@ void NativeMapView::registerNative(jni::JNIEnv& env) {
         METHOD(&NativeMapView::setSpriteAltitude, "nativeSetSpriteAltitude"),
         METHOD(&NativeMapView::clearSpriteAltitude, "nativeClearSpriteAltitude"),
         METHOD(&NativeMapView::setEcefLine, "nativeSetEcefLine"),
+        METHOD(&NativeMapView::setSurfaceMode, "nativeSetSurfaceMode"),
         METHOD(&NativeMapView::isRealAltitudeModeEnabled, "nativeIsRealAltitudeModeEnabled"),
         METHOD(&NativeMapView::getZoom, "nativeGetZoom"),
         METHOD(&NativeMapView::setZoom, "nativeSetZoom"),

@@ -1002,7 +1002,18 @@ void RenderOrchestrator::updateTerrain(gfx::ShaderRegistry& shaders,
     terrain->setOptions(*options);
 
     RenderSource* demSource = getRenderSource(options->getSource());
-    terrain->update(shaders, context, state, demSource, updateParameters->pixelRatio, changes);
+    // Generacion de las teselas de imagen cargadas (ADR 0059, plan E2): cambia cuando llega o sale una tesela; ensucia la superficie por celda.
+    uint64_t surfaceGeneration = 0;
+    for (const auto& [name, source] : renderSources) {
+        if (!source->isEnabled() || source->baseImpl->type != style::SourceType::Raster) continue;
+        if (const auto tiles = source->getRenderTiles()) {
+            for (const RenderTile& tile : *tiles) {
+                if (!tile.getTile().isRenderable()) continue;
+                surfaceGeneration += std::hash<OverscaledTileID>()(tile.getOverscaledTileID()) * 0x9E3779B97F4A7C15ull;
+            }
+        }
+    }
+    terrain->update(shaders, context, state, demSource, updateParameters->pixelRatio, surfaceGeneration, changes);
 }
 
 void RenderOrchestrator::updateGlobe(gfx::ShaderRegistry& shaders,

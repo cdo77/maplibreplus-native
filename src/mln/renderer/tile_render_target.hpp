@@ -4,6 +4,7 @@
 #include <mln/tile/tile_id.hpp>
 #include <mln/util/geo.hpp>
 #include <mln/util/mat4.hpp>
+#include <mln/util/surface_cull.hpp>
 
 #include <optional>
 
@@ -35,6 +36,8 @@ public:
     // proyeccion de render() y worldToUVMatrix() se basan en el area, no en tileID.
     void setGeographicArea(const GeographicArea& area) { geographicArea = area; }
     void setActive(bool a) { active = a; }
+    // Pasada de superficie por celda (ADR 0059): solo se recorren las teselas que se solapan con la celda.
+    void setCull(const util::SurfaceCull& c) { cull = c; }
 
     // Matriz que lleva coordenadas world-tile (mismas unidades que Projection::project con la
     // escala actual) a UV [0,1] de este render target -- para que otros renderables (el terreno)
@@ -51,6 +54,7 @@ private:
     UnwrappedTileID tileID;
     std::optional<GeographicArea> geographicArea;
     bool active = true;
+    std::optional<util::SurfaceCull> cull;
 };
 
 using TileRenderTargetPtr = std::shared_ptr<TileRenderTarget>;

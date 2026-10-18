@@ -184,6 +184,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/globe.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/globe.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain_surface.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain_ecef_lod.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/terrain_ecef_lod.hpp

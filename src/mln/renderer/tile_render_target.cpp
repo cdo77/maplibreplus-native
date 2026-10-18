@@ -82,6 +82,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     if (!active) {
         return;
     }
+    const util::SurfaceCullScope cullScope(cull ? &*cull : nullptr);
     const mat4 projMatrix = tileProjMatrix(parameters);
 
     parameters.renderPass = parameters.encoder->createRenderPass("tile render target",

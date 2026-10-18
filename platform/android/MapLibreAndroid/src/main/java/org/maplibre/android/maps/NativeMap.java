@@ -86,6 +86,8 @@ interface NativeMap {
 
   void setEcefLine(@NonNull String layerId, boolean on);
 
+  void setSurfaceMode(int mode);
+
   boolean isRealAltitudeModeEnabled();
 
   void setZoom(double zoom, @NonNull PointF focalPoint, long duration);
