@@ -185,6 +185,44 @@ TEST(SurfacePool, DestroysFreeTexturesOfADifferentSizeWhenMemoryIsTight) {
     EXPECT_LE(pool.bytesInUse() + pool.bytesInReusePool(), cfg.capBytes);
 }
 
+TEST(SurfacePool, CellsNotRequestedForRetainFramesAreEvictedEvenUnderTheCap) {
+    PoolConfig cfg;
+    cfg.retainFrames = 10;
+    SurfacePool pool(cfg);   // tope de 256 MB: sobra lugar, pero no se guardan celdas viejas
+
+    pool.beginFrame(1);
+    pool.request(key(12, 0, 0), 512);
+    pool.request(key(12, 1, 0), 512);
+    pool.endFrame();
+    for (uint64_t f = 2; f <= 11; ++f) {      // 10 frames sin pedir: todavía se conservan (se puede volver a la celda gratis)
+        pool.beginFrame(f);
+        pool.request(key(12, 1, 0), 512);     // B se sigue pidiendo; A no
+        pool.endFrame();
+    }
+    EXPECT_NE(pool.find(key(12, 0, 0)), nullptr);
+
+    pool.beginFrame(12);
+    pool.request(key(12, 1, 0), 512);
+    pool.endFrame();
+    EXPECT_EQ(pool.find(key(12, 0, 0)), nullptr);   // pasaron más de 10 frames sin pedirla
+    EXPECT_NE(pool.find(key(12, 1, 0)), nullptr);
+    EXPECT_EQ(pool.count(), 1u);
+    EXPECT_EQ(pool.bytesInUse(), kCell512);
+    EXPECT_LE(pool.bytesInReusePool(), cfg.reuseLimitBytes);   // lo liberado solo queda en el pool de reuso chico, no como caché
+}
+
+TEST(SurfacePool, WithoutRetentionTheCacheFillsUpToTheCapAsBefore) {
+    PoolConfig cfg;
+    cfg.retainFrames = 0;
+    SurfacePool pool(cfg);
+    pool.beginFrame(1);
+    pool.request(key(12, 0, 0), 512);
+    pool.endFrame();
+    pool.beginFrame(1000);
+    pool.endFrame();
+    EXPECT_NE(pool.find(key(12, 0, 0)), nullptr);
+}
+
 TEST(SurfacePool, NearestCleanAncestorSkipsDirtyAndMissing) {
     SurfacePool pool;
     pool.beginFrame(1);

@@ -86,6 +86,10 @@ struct PoolConfig {
     uint32_t maxTilePx = 512;                       // D4
     uint32_t minTilePx = 32;
     unsigned maxMip = 4;
+    // Frames sin pedir una celda antes de expulsarla AUNQUE haya lugar bajo el tope (0 = sin retención por edad: caché LRU que se llena hasta el tope). ATAK no guarda lo que no
+    // es visible (suelta la textura al salir de pantalla y su pool de reuso es de 2 MB): si el pool se llenara de celdas viejas hasta el tope, la memoria subiría al techo (medido
+    // en la F2: +240 MB con el techo de 256 MB). Con 120 frames (~2-4 s) volver a una celda recién dejada sigue siendo gratis.
+    uint64_t retainFrames = 120;
 };
 
 /// Texturas por celda: asignación, estado, expulsión LRU y reuso. No toca la GPU: informa qué texturas crear y cuáles destruir.
@@ -212,6 +216,13 @@ public:
     /// Cierra el frame: expulsa por LRU lo que NO se pidió en este frame hasta entrar en el tope (lo pedido nunca se expulsa) y recorta el pool de reuso.
     /// Devuelve las texturas que la GPU debe destruir ahora.
     std::vector<uint32_t> endFrame() {
+        if (config_.retainFrames > 0) {
+            std::vector<CellKey> stale;
+            for (const auto& [key, e] : entries_) {
+                if (frame_ > e.lastUsedFrame + config_.retainFrames) stale.push_back(key);
+            }
+            for (const CellKey& key : stale) evict(&entries_.at(key));
+        }
         if (bytes_ > config_.capBytes) {
             std::vector<Entry*> candidates;
             for (auto& [key, e] : entries_) {
