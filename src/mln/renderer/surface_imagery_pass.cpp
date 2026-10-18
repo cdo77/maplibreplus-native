@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -208,6 +209,27 @@ void drawImagery(RenderOrchestrator& orchestrator, PaintParameters& parameters, 
     static_cast<gl::Context&>(parameters.context).setDirtyState();
 }
 
+void generateCellMipmaps(PaintParameters& parameters, const gfx::Texture2DPtr& texture) {
+    if (!texture) return;
+    // Extension anisotropica (constantes de GL_EXT_texture_filter_anisotropic): se consulta una sola vez.
+    constexpr GLenum kTextureMaxAnisotropy = 0x84FE;
+    constexpr GLenum kMaxTextureMaxAnisotropy = 0x84FF;
+    static const float maxAnisotropy = [] {
+        const auto* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        if (!extensions || !std::strstr(extensions, "GL_EXT_texture_filter_anisotropic")) return 1.0f;
+        GLfloat value = 1.0f;
+        glGetFloatv(kMaxTextureMaxAnisotropy, &value);
+        return std::min(value, 8.0f);
+    }();
+
+    glBindTexture(GL_TEXTURE_2D, static_cast<const gl::Texture2D&>(*texture).getTextureID());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    if (maxAnisotropy > 1.0f) glTexParameterf(GL_TEXTURE_2D, kTextureMaxAnisotropy, maxAnisotropy);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    static_cast<gl::Context&>(parameters.context).setDirtyState();
+}
+
 } // namespace surface_pass
 } // namespace mln
 
@@ -216,6 +238,7 @@ void drawImagery(RenderOrchestrator& orchestrator, PaintParameters& parameters, 
 namespace mln {
 namespace surface_pass {
 void drawImagery(RenderOrchestrator&, PaintParameters&, const util::SurfaceCull&) {}
+void generateCellMipmaps(PaintParameters&, const gfx::Texture2DPtr&) {}
 } // namespace surface_pass
 } // namespace mln
 

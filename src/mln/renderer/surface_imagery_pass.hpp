@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mln/gfx/context.hpp>
 #include <mln/util/surface_cull.hpp>
 
 namespace mln {
@@ -13,6 +14,10 @@ class RenderOrchestrator;
 namespace surface_pass {
 
 void drawImagery(RenderOrchestrator&, PaintParameters&, const util::SurfaceCull& cell);
+
+/// Genera la cadena de mipmaps de la textura de una celda recien renderizada y activa el filtro trilineal y, si el driver lo da, el anisotropico (hasta 8x): sin ellos los techos
+/// lejanos de una vista inclinada se submuestrean y muestran rayas. `PaintParameters` solo se usa para declarar sucio el estado de GL. Fase P3; lo usa `SurfaceMode` 7.
+void generateCellMipmaps(PaintParameters&, const gfx::Texture2DPtr&);
 
 } // namespace surface_pass
 } // namespace mln
