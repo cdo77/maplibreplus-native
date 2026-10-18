@@ -34,7 +34,7 @@ struct alignas(16) TerrainDrawableUBO {
     // cell_valid = 1.0 solo con SurfaceMode >= 2 y celda disponible; con 0.0 el terreno sigue pintando solo con los drapes.
     /* 368 */ std::array<float, 4 * 4> cell_matrix;
     /* 432 */ float cell_valid;
-    /* 436 */ float cell_pad0;
+    /* 436 */ float cell_only;   // 1.0 = solo celdas: el shader no muestrea los drapes (plan P4, SurfaceMode >= 5)
     /* 440 */ float cell_pad1;
     /* 444 */ float cell_pad2;
     /* 448 */

@@ -25,7 +25,7 @@ layout (std140) uniform TerrainDrawableUBO {
     // Superficie por celda (ADR 0059, F3): tile-local -> UV de la textura de la celda; u_cell_valid solo lo lee el fragment.
     highp mat4 u_cell_matrix;
     lowp float u_cell_valid;
-    lowp float u_cell_pad0;
+    lowp float u_cell_only; // 1.0 = solo celdas: no se muestrean los drapes (plan P4)
     lowp float u_cell_pad1;
     lowp float u_cell_pad2;
 };

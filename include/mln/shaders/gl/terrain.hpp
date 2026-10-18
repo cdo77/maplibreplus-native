@@ -35,7 +35,7 @@ layout (std140) uniform TerrainDrawableUBO {
     // Superficie por celda (ADR 0059, F3): tile-local -> UV de la textura de la celda; u_cell_valid solo lo lee el fragment.
     highp mat4 u_cell_matrix;
     lowp float u_cell_valid;
-    lowp float u_cell_pad0;
+    lowp float u_cell_only; // 1.0 = solo celdas: no se muestrean los drapes (plan P4)
     lowp float u_cell_pad1;
     lowp float u_cell_pad2;
 };
@@ -112,7 +112,7 @@ void main() {
     lowp float u_cap_b;
     highp mat4 u_cell_matrix; // solo lo lee el vertex
     lowp float u_cell_valid;
-    lowp float u_cell_pad0;
+    lowp float u_cell_only; // 1.0 = solo celdas: no se muestrean los drapes (plan P4)
     lowp float u_cell_pad1;
     lowp float u_cell_pad2;
 };
@@ -158,18 +158,23 @@ void main() {
         // El drape grueso estira su borde fuera de su area (horizonte lejano con la camara baja). En vista de globo
         // los drapes son el planisferio: debajo va azul oceano mientras la imagen no llega (no blanco).
         vec4 color;
-        if (u_drape_global > 0.5) {
-            vec4 coarse = texture(u_terrain_drape2, drape_global_uv(v_drape_uv2));
-            color = vec4(0.07, 0.15, 0.30, 1.0) * (1.0 - coarse.a) + coarse;
+        if (u_cell_only > 0.5) {
+            // Solo celdas (plan P4): los drapes no se renderizan; donde ninguna celda tiene imagen todavia se ve un fondo oscuro neutro.
+            color = vec4(0.05, 0.07, 0.10, 1.0);
         } else {
-            color = texture(u_terrain_drape2, clamp(v_drape_uv2, 0.0, 1.0));
+            if (u_drape_global > 0.5) {
+                vec4 coarse = texture(u_terrain_drape2, drape_global_uv(v_drape_uv2));
+                color = vec4(0.07, 0.15, 0.30, 1.0) * (1.0 - coarse.a) + coarse;
+            } else {
+                color = texture(u_terrain_drape2, clamp(v_drape_uv2, 0.0, 1.0));
+            }
+            vec4 mid = u_drape_global > 1.5 ? texture(u_terrain_drape1, drape_global_uv(v_drape_uv1))
+                                            : texture(u_terrain_drape1, v_drape_uv1) * drape_inside(v_drape_uv1);
+            color = color * (1.0 - mid.a) + mid;
+            vec4 fine = u_drape_global > 2.5 ? texture(u_terrain_drape0, drape_global_uv(v_drape_uv0))
+                                             : texture(u_terrain_drape0, v_drape_uv0) * drape_inside(v_drape_uv0);
+            color = color * (1.0 - fine.a) + fine;
         }
-        vec4 mid = u_drape_global > 1.5 ? texture(u_terrain_drape1, drape_global_uv(v_drape_uv1))
-                                        : texture(u_terrain_drape1, v_drape_uv1) * drape_inside(v_drape_uv1);
-        color = color * (1.0 - mid.a) + mid;
-        vec4 fine = u_drape_global > 2.5 ? texture(u_terrain_drape0, drape_global_uv(v_drape_uv0))
-                                         : texture(u_terrain_drape0, v_drape_uv0) * drape_inside(v_drape_uv0);
-        color = color * (1.0 - fine.a) + fine;
         // Superficie por celda (ADR 0059, F3): la textura de la celda (propia o la del ancestro limpio mas cercano) va ENCIMA de los drapes, "over"
         // premultiplicado. Donde la celda no tiene imagen (alfa 0) se sigue viendo el drape: el respaldo nunca queda en blanco. La UV se recorta al
         // centro de los texels de borde para que el filtro lineal no mezcle con el lado opuesto de la textura.
