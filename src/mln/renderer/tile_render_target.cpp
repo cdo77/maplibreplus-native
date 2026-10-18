@@ -94,7 +94,10 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     const util::SurfaceCull* const cullPtr = cull ? &*cull : nullptr;
     // SurfaceMode 5 = pasada propia de imagen base (plan pasada-propia-superficie, P1): la imagen se dibuja aparte, directo sobre la textura de la celda; los grupos de vectores
     // siguen por el camino de capas.
-    const bool ownImagery = cullPtr && util::SurfaceMode::instance().value() == 5;
+    // SurfaceMode 6 = lo mismo que 5 mas recorte por scissor de cada dibujable a la huella de su tesela (fase P2).
+    const int surfaceMode = util::SurfaceMode::instance().value();
+    const bool ownImagery = cullPtr && (surfaceMode == 5 || surfaceMode == 6);
+    const util::SurfaceClipScope clipScope(cullPtr && surfaceMode == 6 ? cullPtr : nullptr);
     const auto cullScopeFor = [&](const LayerGroupBase& layerGroup) {
         return util::SurfaceCullScope(cullPtr && orchestrator.layerGroupIsType(layerGroup, "raster") ? cullPtr : nullptr);
     };

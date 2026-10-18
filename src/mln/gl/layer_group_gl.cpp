@@ -10,6 +10,10 @@
 #include <mln/shaders/gl/shader_program_gl.hpp>
 #include <mln/util/convert.hpp>
 #include <mln/util/instrumentation.hpp>
+#include <mln/util/surface_cull.hpp>
+
+#include <algorithm>
+#include <cmath>
 
 namespace mln {
 namespace gl {
@@ -46,6 +50,32 @@ void TileLayerGroupGL::upload(gfx::UploadPass& uploadPass) {
         drawableGL.upload(uploadPass);
     });
 }
+
+namespace {
+
+// Huella de una tesela dentro de la celda que se esta renderizando, como rectangulo de scissor en pixeles (origen abajo a la izquierda; el norte es arriba). Equivale al recorte por
+// stencil de cada tesela, sin el buffer de stencil: evita que el relleno translucido de teselas vecinas se pise en el margen del buffer de cada una (los "cuadrados").
+gfx::ScissorRect tileScissorInCell(const util::SurfaceCull& cell, const OverscaledTileID& id, const gfx::ScissorRect& full) {
+    if (id.wrap != cell.wrap) return {0, 0, 0, 0};
+    const double s = std::ldexp(1.0, static_cast<int>(id.canonical.z) - static_cast<int>(cell.z));
+    const double u0 = static_cast<double>(id.canonical.x) / s - static_cast<double>(cell.x);
+    const double v0 = static_cast<double>(id.canonical.y) / s - static_cast<double>(cell.y);
+    const double w = 1.0 / s;
+    const double fw = static_cast<double>(full.width);
+    const double fh = static_cast<double>(full.height);
+    const auto clampPx = [](double v, double hi) { return std::min(std::max(v, 0.0), hi); };
+    const double x0 = clampPx(std::floor(u0 * fw), fw);
+    const double x1 = clampPx(std::ceil((u0 + w) * fw), fw);
+    const double yTop = clampPx(std::floor(v0 * fh), fh);
+    const double yBottom = clampPx(std::ceil((v0 + w) * fh), fh);
+    if (x1 <= x0 || yBottom <= yTop) return {0, 0, 0, 0};
+    return {full.x + static_cast<int32_t>(x0),
+            full.y + static_cast<int32_t>(fh - yBottom),
+            static_cast<uint32_t>(x1 - x0),
+            static_cast<uint32_t>(yBottom - yTop)};
+}
+
+} // namespace
 
 void TileLayerGroupGL::render(RenderOrchestrator&, PaintParameters& parameters) {
     if (!enabled) {
@@ -139,7 +169,12 @@ void TileLayerGroupGL::render(RenderOrchestrator&, PaintParameters& parameters) 
             context.setStencilMode(drawable.getEnableStencil() ? stencilMode3d : gfx::StencilMode::disabled());
         }
 
+        const gfx::ScissorRect fullScissor = parameters.scissorRect;
+        if (const util::SurfaceCull* clip = util::SurfaceCull::clip(); clip && drawable.getTileID()) {
+            parameters.scissorRect = tileScissorInCell(*clip, *drawable.getTileID(), fullScissor);
+        }
         drawable.draw(parameters);
+        parameters.scissorRect = fullScissor;
     });
 
     if (bindUBOs) {

@@ -27,10 +27,28 @@ struct SurfaceCull {
         return (static_cast<uint64_t>(x) >> dz) == t.x && (static_cast<uint64_t>(y) >> dz) == t.y;
     }
 
+    /// Celda cuya pasada esta corriendo, para recortar cada dibujable a la huella de su tesela (fase P2 de la pasada propia). Aparte de `current()` porque este rige para todos los
+    /// grupos (el recorte de dibujables solo aplica a los de imagen).
+    static const SurfaceCull*& clip() {
+        static thread_local const SurfaceCull* value = nullptr;
+        return value;
+    }
+
     static const SurfaceCull*& current() {
         static thread_local const SurfaceCull* value = nullptr;
         return value;
     }
+};
+
+class SurfaceClipScope {
+public:
+    explicit SurfaceClipScope(const SurfaceCull* cell) : previous(SurfaceCull::clip()) { SurfaceCull::clip() = cell; }
+    ~SurfaceClipScope() { SurfaceCull::clip() = previous; }
+    SurfaceClipScope(const SurfaceClipScope&) = delete;
+    SurfaceClipScope& operator=(const SurfaceClipScope&) = delete;
+
+private:
+    const SurfaceCull* previous;
 };
 
 class SurfaceCullScope {
