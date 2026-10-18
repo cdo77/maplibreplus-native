@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace mln {
 namespace gl {
@@ -137,11 +138,32 @@ void TileLayerGroupGL::render(RenderOrchestrator&, PaintParameters& parameters) 
     const auto debugGroupRender = parameters.encoder->createDebugGroup(label_render.c_str());
 #endif
 
+    // Dentro de una celda (fase P2), los grupos de vectores no se recortan por celda y retienen las teselas de TODOS los niveles que cubren la zona; dibujar el mismo poligono desde
+    // dos o tres niveles suma la opacidad del relleno translucido (los "cuadrados" del circulo de precision, medido: el mismo relleno entraba desde z10, z16 y z18). Se dibuja
+    // solo la tesela mas fina que cubre cada zona: se salta una tesela si otra del mismo grupo que se solapa con la celda es descendiente suya.
+    std::vector<OverscaledTileID> tilesInCell;
+    const util::SurfaceCull* const cellClip = util::SurfaceCull::clip();
+    if (cellClip && !util::SurfaceCull::current()) {
+        visitDrawables([&](gfx::Drawable& drawable) {
+            const auto& id = drawable.getTileID();
+            if (id && drawable.getEnabled() && drawable.hasRenderPass(parameters.pass) && cellClip->intersects(*id)) tilesInCell.push_back(*id);
+        });
+    }
+    const auto hasFinerTileInCell = [&](const OverscaledTileID& t) {
+        for (const OverscaledTileID& u : tilesInCell) {
+            if (u.wrap != t.wrap || u.canonical.z <= t.canonical.z) continue;
+            const unsigned dz = static_cast<unsigned>(u.canonical.z - t.canonical.z);
+            if ((static_cast<uint64_t>(u.canonical.x) >> dz) == t.canonical.x && (static_cast<uint64_t>(u.canonical.y) >> dz) == t.canonical.y) return true;
+        }
+        return false;
+    };
+
     bool bindUBOs = false;
     visitDrawables([&](gfx::Drawable& drawable) {
         if (!drawable.getEnabled() || !drawable.hasRenderPass(parameters.pass)) {
             return;
         }
+        if (!tilesInCell.empty() && drawable.getTileID() && hasFinerTileInCell(*drawable.getTileID())) return;
 
 #if !defined(NDEBUG)
         std::string label_tile;
