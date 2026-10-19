@@ -34,5 +34,19 @@ private:
     std::atomic<int64_t> maxMicros{0};
 };
 
+/// Reuso de teselas de imagen en la piramide (plan P4, medicion de cache): cuantas teselas salieron de la cache en memoria del motor, cuantas se crearon por primera vez en la sesion y cuantas
+/// se HICIERON DE NUEVO (el motor ya las habia creado y las solto: imagen que ya se habia bajado y hubo que decodificar/subir otra vez). Las lee y reinicia `RenderTerrain` en su log.
+class TileReuseStats {
+public:
+    static TileReuseStats& instance() {
+        static TileReuseStats s;
+        return s;
+    }
+    std::atomic<uint64_t> fromCache{0};
+    std::atomic<uint64_t> fresh{0};
+    std::atomic<uint64_t> rebuilt{0};
+    std::atomic<uint64_t> lruMax{0};
+};
+
 } // namespace util
 } // namespace mln

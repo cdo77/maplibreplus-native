@@ -361,6 +361,7 @@ struct VisibleCell {
     CellKey key;
     double distanceM = 0.0;
     double screenPx = 0.0;   // lado de la celda en pixeles de pantalla (en su punto mas cercano); 0 = desconocido: el tamaño sale del mip como en ATAK
+    bool base = false;       // celda gruesa de respaldo (ancestro de las visibles): chica y con prioridad maxima, para que toda celda nueva tenga algo que mostrar mientras se dibuja
 };
 
 /// Una celda que hay que (re)renderizar este frame.
@@ -369,10 +370,11 @@ struct PlanItem {
     uint32_t sizePx = 0;
     unsigned mip = 0;
     double estimatedMs = 0.0;
+    bool base = false;
 };
 
 struct SchedulerConfig {
-    double budgetMs = 5.0;          // D3: 5 ms por frame
+    double budgetMs = 10.0;         // D3: 5 ms por frame; 10 desde la prueba de campo (con 5 se dibujaba ~1 celda por cuadro y al moverse aparecian huecos)
     double msPerMegapixel = 10.0;   // costo estimado de una pasada: medido en la F2 en el S25 Ultra con la GPU sincronizada, ~2,7 ms por celda de 512 px (0,26 Mpx) = ~10 ms/Mpx
     size_t maxItems = 64;
     uint32_t sourceTilePx = 256;    // lado de las teselas de imagen de la fuente
@@ -444,10 +446,15 @@ public:
             const bool stale = config_.refreshMs > 0 && e.state == CellState::Clean && nowMs - e.renderedAtMs >= config_.refreshMs;
             if (e.state == CellState::Clean && !stale) continue;
             const double mpx = static_cast<double>(sizes[i]) * sizes[i] / 1.0e6;
-            pending.push_back({{v.key, sizes[i], mips[i], mpx * config_.msPerMegapixel}, v.distanceM});
+            PlanItem planItem{v.key, sizes[i], mips[i], mpx * config_.msPerMegapixel};
+            planItem.base = v.base;
+            pending.push_back({planItem, v.distanceM});
         }
         std::sort(pending.begin(), pending.end(), [](const Candidate& a, const Candidate& b) {
-            return std::tie(a.item.mip, a.distanceM, a.item.key) < std::tie(b.item.mip, b.distanceM, b.item.key);
+            // Las celdas base primero (baratas y son el respaldo de todas las demas), despues de lo mas fino a lo mas grueso.
+            const bool aFirst = !a.item.base;
+            const bool bFirst = !b.item.base;
+            return std::tie(aFirst, a.item.mip, a.distanceM, a.item.key) < std::tie(bFirst, b.item.mip, b.distanceM, b.item.key);
         });
 
         std::vector<PlanItem> out;

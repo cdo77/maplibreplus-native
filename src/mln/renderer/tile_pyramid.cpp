@@ -1,4 +1,6 @@
 #include <mln/renderer/tile_pyramid.hpp>
+#include <mln/util/surface_stats.hpp>
+#include <mln/util/surface_mode.hpp>
 #include <mln/renderer/paint_parameters.hpp>
 #include <mln/renderer/render_source.hpp>
 #include <mln/renderer/tile_parameters.hpp>
@@ -274,10 +276,19 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             return nullptr;
         }
         std::unique_ptr<Tile> tile = cache.pop(tileID);
-        if (!tile) {
+        if (tile) {
+            if (type == SourceType::Raster) util::TileReuseStats::instance().fromCache.fetch_add(1);
+        } else {
             tile = createTile(tileID, observer);
             if (!tile) return nullptr;
             tile->setLayers(layers);
+            if (type == SourceType::Raster) {
+                if (everCreated.insert(tileID).second) {
+                    util::TileReuseStats::instance().fresh.fetch_add(1);
+                } else {
+                    util::TileReuseStats::instance().rebuilt.fetch_add(1);
+                }
+            }
         }
 
         return tiles.emplace(tileID, std::move(tile)).first->second.get();
@@ -330,7 +341,13 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             std::max(static_cast<double>(parameters.transformState.getSize().width) / tileSize, 1.0) *
             std::max(static_cast<double>(parameters.transformState.getSize().height) / tileSize, 1.0) *
             (parameters.transformState.getMaxZoom() - parameters.transformState.getMinZoom() + 1) * 0.5);
-        cache.setSize(conservativeCacheSize);
+        // Cache de teselas ya decodificadas en memoria (plan P4). La cuenta conservadora (~240 teselas) queda corta para la vista de las celdas (450-740 teselas en uso): al volver por un camino ya
+        // andado se rehacian ~480 teselas (leer, decodificar y subir otra vez) aunque estaban en el disco. ATAK guarda 100 MB de texturas decodificadas (GLTextureCache, ~800 teselas): con las celdas
+        // activas el cache de imagen sube a 600 teselas (~77 MB de GPU en RGB565).
+        size_t lruSize = conservativeCacheSize;
+        if (type == SourceType::Raster && util::SurfaceMode::instance().value() >= 5) lruSize = std::max<size_t>(lruSize, 600);
+        cache.setSize(lruSize);
+        if (type == SourceType::Raster) util::TileReuseStats::instance().lruMax.store(lruSize);
     } else {
         cache.setSize(0);
     }

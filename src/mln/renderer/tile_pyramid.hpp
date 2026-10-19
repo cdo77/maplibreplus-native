@@ -1,5 +1,7 @@
 #pragma once
 
+#include <set>
+
 #include <mln/style/layer_properties.hpp>
 #include <mln/style/source_impl.hpp>
 #include <mln/style/types.hpp>
@@ -77,6 +79,7 @@ private:
 
     std::map<OverscaledTileID, std::unique_ptr<Tile>> tiles;
     TileCache cache;
+    std::set<OverscaledTileID> everCreated;   // medicion de reuso (plan P4): teselas de imagen ya creadas alguna vez en la sesion
 
     std::map<UnwrappedTileID, std::reference_wrapper<Tile>> renderedTiles; // Sorted by tile id.
     TileObserver* observer = nullptr;

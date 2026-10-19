@@ -465,6 +465,27 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                                     distanceM,
                                     ecefCamera ? screenLambda * sideM / std::max(distanceM, 1.0) : 0.0});
         }
+        // Celdas base (prueba de campo, plan P4): los ancestros 3 y 6 niveles arriba de las visibles, de 256 px y con prioridad maxima. Sin ellas una celda nueva (al moverse o cambiar de zoom)
+        // no tiene ningun ancestro dibujado que mostrar mientras se renderiza y queda el fondo oscuro. Son pocas porque cada ancestro lo comparten muchas celdas.
+        {
+            std::map<util::surface::CellKey, double> baseDistance;
+            for (const util::surface::VisibleCell& leaf : visibleCells) {
+                util::surface::CellKey ancestor = leaf.key;
+                for (unsigned up = 1; up <= 6 && ancestor.z > 3; ++up) {
+                    ancestor = ancestor.parent();
+                    if (up != 3 && up != 6) continue;
+                    const auto it = baseDistance.find(ancestor);
+                    if (it == baseDistance.end() || leaf.distanceM < it->second) baseDistance[ancestor] = leaf.distanceM;
+                }
+            }
+            for (const auto& [key, distanceM] : baseDistance) {
+                const bool alreadyVisible = std::any_of(visibleCells.begin(), visibleCells.end(), [&](const util::surface::VisibleCell& v) { return v.key == key; });
+                if (alreadyVisible) continue;
+                util::surface::VisibleCell base{key, distanceM, 256.0};
+                base.base = true;
+                visibleCells.push_back(base);
+            }
+        }
         updateSurfaceCells(context, visibleCells, surfaceTiles, changes);
     }
 

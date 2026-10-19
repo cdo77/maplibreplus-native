@@ -85,6 +85,9 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
         const auto& st = surfacePool.stats();
         const auto passes = util::SurfaceStats::instance().takeWindow();
         // Reconocimiento de memoria (plan P4): teselas de imagen retenidas por nivel de zoom y su peso estimado como RGBA8 de 256x256 (256 KB c/u, como las sube el motor).
+        auto& reuse = util::TileReuseStats::instance();
+        const std::string tileReuse = " tesela_del_cache=" + std::to_string(reuse.fromCache.exchange(0)) + " tesela_nueva=" + std::to_string(reuse.fresh.exchange(0)) +
+                                      " tesela_REHECHA=" + std::to_string(reuse.rebuilt.exchange(0)) + " lru_max=" + std::to_string(reuse.lruMax.load());
         std::string tilesPerZ;
         {
             std::map<int, size_t> byZ;
@@ -99,7 +102,7 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                          std::to_string(st.peakBytes / (1024.0 * 1024.0)) + " creaciones=" + std::to_string(st.creations) + " reusos=" +
                          std::to_string(st.reuses) + " expulsiones=" + std::to_string(st.evictions) + " destruidas=" + std::to_string(st.destroyed) +
                          " fuera_de_tope=" + std::to_string(st.overBudgetFrames) + " targets=" + std::to_string(cellTargets.size()) +
-                         " teselas_imagen=" + std::to_string(surfaceTilesPrev.size()) + " (~" + std::to_string(surfaceTilesPrev.size() / 4) + " MB) por_z=[" + tilesPerZ + "]" +
+                         tileReuse + " teselas_imagen=" + std::to_string(surfaceTilesPrev.size()) + " (~" + std::to_string(surfaceTilesPrev.size() / 4) + " MB) por_z=[" + tilesPerZ + "]" +
                          " usa_propia=" + std::to_string(surfaceUsedOwn) + " usa_ancestro=" + std::to_string(surfaceUsedAncestor) + " usa_ninguna=" +
                          std::to_string(surfaceUsedNone) + " max_niveles_arriba=" + std::to_string(surfaceMaxLevelsUp) +
                          " pasadas=" + std::to_string(passes.passes) + " ms_por_pasada=" +

@@ -290,6 +290,7 @@ TEST(SurfaceScheduler, BudgetLimitsTheWorkPerFrameButAlwaysProgresses) {
     SurfacePool pool(pcfg512);
     pool.beginFrame(1);
     SchedulerConfig cfg;
+    cfg.budgetMs = 5.0;
     cfg.msPerMegapixel = 2.0;   // 5 ms y 2 ms por megapíxel: una celda de 512 px = 0,524 ms
     SurfaceScheduler sched(cfg);
     std::vector<VisibleCell> visible;
@@ -321,7 +322,7 @@ TEST(SurfaceScheduler, TextureSizeFollowsScreenFootprintCappedByNativeImageryAnd
     VisibleCell big{key(16, 4, 4), 10.0, 700.0};      // ocupa 700 px: 1024 (sube a la potencia de 2)
     VisibleCell small{key(16, 4, 5), 10.0, 90.0};     // 90 px: 128
     VisibleCell huge{key(16, 4, 6), 10.0, 5000.0};    // mas que el tope: 1024
-    VisibleCell nativeCap{key(21, 4, 7), 10.0, 900.0};// z21: la imagen nativa de ese nivel es 256/4 = 64 px, no hay mas detalle que mostrar
+    VisibleCell nativeCap{key(23, 4, 7), 10.0, 900.0};// z23: con la fuente hasta z21 la imagen nativa de ese nivel es 256/4 = 64 px, no hay mas detalle que mostrar
     const auto plan = sched.plan({big, small, huge, nativeCap}, pool, 0);
     ASSERT_EQ(plan.size(), 4u);
     for (const auto& it : plan) {
@@ -337,6 +338,20 @@ TEST(SurfaceScheduler, TextureSizeFollowsScreenFootprintCappedByNativeImageryAnd
     grown.screenPx = 60.0;                            // buscaria 64; existente 128 = 2x: se conserva
     sched.plan({grown}, pool, 0);
     EXPECT_EQ(pool.find(small.key)->sizePx, 128u);
+}
+
+TEST(SurfaceScheduler, BaseCellsAreScheduledFirstEvenWhenFinerOnesArePending) {
+    SurfacePool pool;
+    pool.beginFrame(1);
+    SchedulerConfig cfg;
+    cfg.budgetMs = 1.0;   // alcanza para una sola celda por cuadro
+    SurfaceScheduler sched(cfg);
+    VisibleCell fine{key(20, 1, 1), 5.0, 900.0};
+    VisibleCell base{key(14, 0, 0), 500.0, 256.0};
+    base.base = true;
+    const auto plan = sched.plan({fine, base}, pool, 0);
+    ASSERT_EQ(plan.size(), 1u);
+    EXPECT_EQ(plan[0].key, base.key);   // la base va primero aunque la fina este mucho mas cerca
 }
 
 TEST(SurfaceScheduler, QuietCameraMeansZeroPassesWithoutRefreshAndRefreshesEvery3sByDefault) {
