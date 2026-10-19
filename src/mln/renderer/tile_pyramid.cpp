@@ -343,9 +343,12 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             (parameters.transformState.getMaxZoom() - parameters.transformState.getMinZoom() + 1) * 0.5);
         // Cache de teselas ya decodificadas en memoria (plan P4). La cuenta conservadora (~240 teselas) queda corta para la vista de las celdas (450-740 teselas en uso): al volver por un camino ya
         // andado se rehacian ~480 teselas (leer, decodificar y subir otra vez) aunque estaban en el disco. ATAK guarda 100 MB de texturas decodificadas (GLTextureCache, ~800 teselas): con las celdas
-        // activas el cache de imagen sube a 600 teselas (~77 MB de GPU en RGB565).
+        // activas el cache de imagen sube a 900 teselas (~115 MB de GPU en RGB565).
         size_t lruSize = conservativeCacheSize;
-        if (type == SourceType::Raster && util::SurfaceMode::instance().value() >= 5) lruSize = std::max<size_t>(lruSize, 600);
+        if (type == SourceType::Raster && util::SurfaceMode::instance().value() >= 5) {
+            // 900 teselas: medido el 2026-10-18 en un ida y vuelta de 200 m (la vista usa ~845): con 600 la vuelta rehacia 120 a 443 teselas segun la corrida, con 900 solo 2 (+30 MB de GPU).
+            lruSize = std::max<size_t>(lruSize, 900);
+        }
         cache.setSize(lruSize);
         if (type == SourceType::Raster) util::TileReuseStats::instance().lruMax.store(lruSize);
     } else {
