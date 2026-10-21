@@ -91,16 +91,16 @@ struct Entry {
 };
 
 struct PoolConfig {
-    size_t capBytes = 256u * 1024u * 1024u;        // D2: techo de memoria de las texturas de superficie
+    size_t capBytes = 128u * 1024u * 1024u;        // D2: techo de memoria de las texturas de superficie. 128 MB: ATAK usa ~0,43 MB por tesela de terreno y ~110 MB a 254 teselas (medido 2026-10-20)
     unsigned bytesPerPixel = 2;                     // RGB565, como ATAK (RGBA8 = 4)
     size_t reuseLimitBytes = 2u * 1024u * 1024u;    // pool de reuso de ATAK (`MT_POOL_LIMIT`)
-    uint32_t maxTilePx = 1024;                      // D4: 512 y se prueba 1024 si de cerca sigue corto; con el tamaño por pantalla (F4) el tope sube a 1024 (el tope de memoria lo cuida)
+    uint32_t maxTilePx = 512;                       // como el MT_TILE_SIZE de ATAK (512 px). Antes 1024: una celda llegaba a 4 MB (RGBA8) y la superficie a ~250 MB; ATAK usa ~0,4 MB por tesela y ~110 MB en total (medido 2026-10-20)
     uint32_t minTilePx = 32;
     unsigned maxMip = 4;
-    // Frames sin pedir una celda antes de expulsarla AUNQUE haya lugar bajo el tope (0 = sin retención por edad: caché LRU que se llena hasta el tope). ATAK no guarda lo que no
-    // es visible (suelta la textura al salir de pantalla y su pool de reuso es de 2 MB): si el pool se llenara de celdas viejas hasta el tope, la memoria subiría al techo (medido
-    // en la F2: +240 MB con el techo de 256 MB). Con 120 frames (~2-4 s) volver a una celda recién dejada sigue siendo gratis.
-    uint64_t retainFrames = 120;
+    // Frames sin pedir una celda antes de expulsarla AUNQUE haya lugar bajo el tope (0 = sin retencion por edad). ATAK no acumula historial: `syncTexture(evictStale)` expulsa de la megatextura todo lo que
+    // no esta en el conjunto actual y su superficie sigue a la vista (7,5 MB en el globo, 109 MB a 22 m; medido 2026-10-20), y volver a un lugar le toma 1-2 s. Con 0 el pool se llenaba hasta el tope
+    // en todas las vistas (255 MB hasta con 4 celdas visibles). 600 frames (~10 s a 60 fps) deja volver gratis a lo recien visto sin llenar el tope.
+    uint64_t retainFrames = 600;
 };
 
 /// Texturas por celda: asignación, estado, expulsión LRU y reuso. No toca la GPU: informa qué texturas crear y cuáles destruir.

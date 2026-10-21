@@ -83,6 +83,7 @@ public:
     void waitForEmpty(const util::SimpleIdentity tag) override;
 
     void requestRender();
+    int consecutiveRenderFailures = 0;   // cuadros seguidos que lanzaron una excepcion (ver render)
     void requestRender(JNIEnv&, jni::Local<jni::Object<MapRenderer>>&);
 
     // Snapshot - requires a RunLoop on the calling thread

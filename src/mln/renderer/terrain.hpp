@@ -122,7 +122,7 @@ private:
     std::optional<SurfaceCellChoice> chooseSurfaceCell(const util::surface::CellKey& key) const;
 
     // RGBA8 (4 B/px) porque el render target de hoy no tiene RGB565 (que usa ATAK y es la mitad); se ajusta cuando haya formato.
-    util::surface::SurfacePool surfacePool{util::surface::PoolConfig{256u * 1024u * 1024u, 4u}};
+    util::surface::SurfacePool surfacePool{util::surface::PoolConfig{128u * 1024u * 1024u, 4u}};
     util::surface::SurfaceScheduler surfaceScheduler;
     std::map<uint32_t, TileRenderTargetPtr> cellTargets;   // textura (slot del pool) -> su render target
     uint64_t surfaceFrame = 0;

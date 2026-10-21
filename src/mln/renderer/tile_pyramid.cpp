@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/renderer/tile_pyramid.hpp>
 #include <mln/util/surface_stats.hpp>
 #include <mln/util/surface_mode.hpp>
@@ -162,7 +163,9 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             }
         }
 
+        util::RenderStage::set("piramide: cobertura de camara (idealZoom)", static_cast<uint64_t>(idealZoom), static_cast<uint64_t>(tileZoom));
         idealTiles = util::tileCover(tileCoverParameters, idealZoom, zoomRange, tileZoom);
+        util::RenderStage::set("piramide: cobertura lista", idealTiles.size(), panTiles.size());
         if (parameters.mode == MapMode::Tile && type != SourceType::Raster && type != SourceType::RasterDEM &&
             idealTiles.size() > 1) {
             mln::Log::Warning(mln::Event::General,
@@ -178,6 +181,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     // createRenderTree) -- asi que por cada uno se calcula un covering aparte contra ese estado
     // (mercator normal: vista nadir con bearing=0) y se UNE (nunca reemplaza) a idealTiles, igual
     // que cada render pass offscreen de ATAK calcula sus propios tiles de imagen.
+    util::RenderStage::set("piramide: antes de unir pistas", idealTiles.size(), parameters.surfaceTileHints.size());
     if (type == SourceType::Raster && !parameters.drapeTransformStates.empty()) {
         std::set<OverscaledTileID> existingIdeal(idealTiles.begin(), idealTiles.end());
         // Con las celdas activas (plan P4) la imagen la piden las celdas visibles: no se calculan los coverings de los drapes (retenian cientos de teselas de zonas fuera de pantalla).
@@ -247,6 +251,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     std::set<OverscaledTileID> retain;
 
     auto retainTileFn = [&](Tile& tile, TileNecessity necessity) -> void {
+        util::RenderStage::set("piramide: retener tesela", tile.id.canonical.z, tile.id.canonical.x);
         if (retain.emplace(tile.id).second) {
             tile.setUpdateParameters({.minimumUpdateInterval = minimumUpdateInterval, .isVolatile = isVolatile});
             tile.setNecessity(necessity);
@@ -272,6 +277,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         tileRange = util::TileRange::fromLatLngBounds(*bounds, zoomRange.min, maxZoom);
     }
     auto createTileFn = [&](const OverscaledTileID& tileID) -> Tile* {
+        util::RenderStage::set("piramide: crear tesela", tileID.canonical.z, tileID.canonical.x);
         if (tileRange && !tileRange->contains(tileID.canonical)) {
             return nullptr;
         }
@@ -297,6 +303,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     auto previouslyRenderedTiles = std::move(renderedTiles);
 
     auto renderTileFn = [&](const UnwrappedTileID& tileID, Tile& tile) {
+        util::RenderStage::set("piramide: dibujar tesela", tileID.canonical.z, tileID.canonical.x);
         addRenderTile(tileID, tile);
         previouslyRenderedTiles.erase(tileID); // Still rendering this tile, no need for special fading logic.
         tile.markRenderedIdeal();
@@ -316,6 +323,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
             maxParentTileOverscaleFactor);
     }
 
+    util::RenderStage::set("piramide: renderables", idealTiles.size(), tiles.size());
     algorithm::updateRenderables(getTileFn,
                                  createTileFn,
                                  retainTileFn,
@@ -325,6 +333,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                                  zoomRange,
                                  maxParentTileOverscaleFactor);
 
+    util::RenderStage::set("piramide: tras renderables", tiles.size(), renderedTiles.size());
     for (auto previouslyRenderedTile : previouslyRenderedTiles) {
         Tile& tile = previouslyRenderedTile.second;
         tile.markRenderedPreviously();
@@ -345,10 +354,11 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         // andado se rehacian ~480 teselas (leer, decodificar y subir otra vez) aunque estaban en el disco. ATAK guarda 100 MB de texturas decodificadas (GLTextureCache, ~800 teselas): con las celdas
         // activas el cache de imagen sube a 900 teselas (~115 MB de GPU en RGB565).
         size_t lruSize = conservativeCacheSize;
-        if (type == SourceType::Raster && util::SurfaceMode::instance().value() >= 5) {
+        if (type == SourceType::Raster && util::SurfaceMode::instance().cells()) {
             // 900 teselas: medido el 2026-10-18 en un ida y vuelta de 200 m (la vista usa ~845): con 600 la vuelta rehacia 120 a 443 teselas segun la corrida, con 900 solo 2 (+30 MB de GPU).
             lruSize = std::max<size_t>(lruSize, 900);
         }
+        util::RenderStage::set("piramide: cache de teselas", lruSize, tiles.size());
         cache.setSize(lruSize);
         if (type == SourceType::Raster) util::TileReuseStats::instance().lruMax.store(lruSize);
     } else {

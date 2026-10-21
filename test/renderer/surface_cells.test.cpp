@@ -299,11 +299,11 @@ TEST(SurfaceScheduler, BudgetLimitsTheWorkPerFrameButAlwaysProgresses) {
     EXPECT_EQ(plan.size(), 9u);              // 9 × 0,524 = 4,7 ms; la décima pasaría de 5
     EXPECT_EQ(plan.front().key, key(15, 0, 0));
 
-    SchedulerConfig calibrated;   // con el costo medido en la F2 (10 ms/Mpx) caben 1 o 2 celdas de 512 px en 5 ms
+    SchedulerConfig calibrated;   // con el costo medido en la F2 (10 ms/Mpx) y el presupuesto de 10 ms de la prueba de campo caben 3 celdas de 512 px (2,62 ms cada una; la cuarta pasaria de 10)
     SurfaceScheduler real(calibrated);
     SurfacePool pool3;
     pool3.beginFrame(1);
-    EXPECT_EQ(real.plan(visible, pool3, 0).size(), 1u);   // 2,62 ms la primera; la segunda pasaría de 5 ms
+    EXPECT_EQ(real.plan(visible, pool3, 0).size(), 3u);   // 3 x 2,62 = 7,9 ms; la cuarta llegaria a 10,5 ms
 
     SchedulerConfig tiny;
     tiny.budgetMs = 0.1;                     // una celda sola supera el presupuesto: igual sale una por frame
@@ -319,16 +319,16 @@ TEST(SurfaceScheduler, TextureSizeFollowsScreenFootprintCappedByNativeImageryAnd
     SchedulerConfig cfg;
     cfg.budgetMs = 1.0e6;
     SurfaceScheduler sched(cfg);
-    VisibleCell big{key(16, 4, 4), 10.0, 700.0};      // ocupa 700 px: 1024 (sube a la potencia de 2)
+    VisibleCell big{key(16, 4, 4), 10.0, 700.0};      // ocupa 700 px: 512 (el tope; sin tope subiria a 1024)
     VisibleCell small{key(16, 4, 5), 10.0, 90.0};     // 90 px: 128
-    VisibleCell huge{key(16, 4, 6), 10.0, 5000.0};    // mas que el tope: 1024
+    VisibleCell huge{key(16, 4, 6), 10.0, 5000.0};    // mas que el tope: 512
     VisibleCell nativeCap{key(23, 4, 7), 10.0, 900.0};// z23: con la fuente hasta z21 la imagen nativa de ese nivel es 256/4 = 64 px, no hay mas detalle que mostrar
     const auto plan = sched.plan({big, small, huge, nativeCap}, pool, 0);
     ASSERT_EQ(plan.size(), 4u);
     for (const auto& it : plan) {
-        if (it.key == big.key) EXPECT_EQ(it.sizePx, 1024u);
+        if (it.key == big.key) EXPECT_EQ(it.sizePx, 512u);
         if (it.key == small.key) EXPECT_EQ(it.sizePx, 128u);
-        if (it.key == huge.key) EXPECT_EQ(it.sizePx, 1024u);
+        if (it.key == huge.key) EXPECT_EQ(it.sizePx, 512u);
         if (it.key == nativeCap.key) EXPECT_EQ(it.sizePx, 64u);
     }
     // histeresis: la celda de 90 px ya tiene 128; con 70 px (buscaria 128 igual) o 130 (buscaria 256) conserva hasta 2x lo buscado

@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/renderer/render_orchestrator.hpp>
 
 #include <mln/annotation/annotation_manager.hpp>
@@ -207,10 +208,11 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
     }
 
-    // Teselas de imagen que piden las celdas visibles (plan P4, SurfaceMode >= 5). Las celdas se eligen con el mismo LOD del terreno pero sin DEM (planas): alcanza para saber que zona y a que
-    // resolucion se ve. Cada celda necesita imagen al zoom que da su textura (pixeles que ocupa en pantalla, tope 1024): dz = ceil(log2(px / 256)) niveles bajo el de la celda.
+    // Teselas de imagen que piden las celdas visibles (plan E2, con las celdas activas). Las celdas se eligen con el mismo LOD del terreno pero sin DEM (planas): alcanza para saber que zona y a que
+    // resolucion se ve. Cada celda necesita imagen al zoom que da su textura (pixeles que ocupa en pantalla, tope 512 = el de la celda): dz = ceil(log2(px / 256)) niveles bajo el de la celda.
+    util::RenderStage::set("pistas de teselas: seleccion de celdas");
     std::vector<OverscaledTileID> surfaceTileHints;
-    if (util::SurfaceMode::instance().value() >= 5 && updateParameters->transformState.isRealAltitudeModeEnabled()) {
+    if (util::SurfaceMode::instance().cells() && updateParameters->transformState.isRealAltitudeModeEnabled()) {
         const TransformState& state = updateParameters->transformState;
         const TransformState::EcefCamera ecef = state.computeEcefCamera(0.0);
         EcefLodCamera lodCamera;
@@ -227,7 +229,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             const double sideM = 2.0 * M_PI * util::EARTH_RADIUS_M *
                                  std::cos(std::atan(std::sinh(M_PI * (1.0 - 2.0 * (cell.tile.y + 0.5) / std::pow(2.0, cell.tile.z))))) / std::pow(2.0, cell.tile.z);
             const double screenPx = lodCamera.lambda * sideM / std::max(cell.distanceM, 1.0);
-            const unsigned dz = static_cast<unsigned>(std::clamp(std::ceil(std::log2(std::max(std::min(screenPx, 1024.0), 1.0) / 256.0)), 0.0, 3.0));
+            const unsigned dz = static_cast<unsigned>(std::clamp(std::ceil(std::log2(std::max(std::min(screenPx, 512.0), 1.0) / 256.0)), 0.0, 3.0));
             const unsigned side = 1u << dz;
             for (unsigned dy = 0; dy < side; ++dy) {
                 for (unsigned dx = 0; dx < side; ++dx) {
@@ -238,6 +240,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
     }
 
+    util::RenderStage::set("pistas de teselas: piso y ancestros", surfaceTileHints.size());
     // Base gruesa (plan P4): ademas de las teselas finas, cada una pide sus ancestros 2, 4 y 6 niveles arriba. Mientras llega la imagen fina (lectura de disco, decodificacion, subida a la GPU)
     // las celdas dibujan debajo la gruesa, borrosa pero presente: sin esto la celda quedaba vacia (fondo oscuro) al moverse o cambiar de zoom, porque ya no hay drapes que cubran. Es el mismo
     // principio de ATAK (conserva la tesela padre y la estira hasta que llega la hija). Se ordena de lo grueso a lo fino para que se pida y cargue primero.
@@ -249,10 +252,17 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
                 const auto z = static_cast<uint8_t>(hint.canonical.z - up);
                 withBase.insert(OverscaledTileID(z, hint.wrap, z, hint.canonical.x >> up, hint.canonical.y >> up));
             }
+            // Piso mundial (como el GLBaseMap de ATAK): toda zona pide ademas su tesela de z6, la capa mas gruesa que la app deja fijada en disco. Sin senal y en una zona nunca vista,
+            // las celdas se dibujan igual con esa imagen estirada (sin detalle) en vez de quedar vacias.
+            if (hint.canonical.z > 6u) {
+                const unsigned upFloor = hint.canonical.z - 6u;
+                withBase.insert(OverscaledTileID(6, hint.wrap, 6, hint.canonical.x >> upFloor, hint.canonical.y >> upFloor));
+            }
         }
         surfaceTileHints.assign(withBase.begin(), withBase.end());
     }
 
+    util::RenderStage::set("pistas de teselas: listas", surfaceTileHints.size());
     TileParameters tileParameters{.pixelRatio = updateParameters->pixelRatio,
                                   .debugOptions = updateParameters->debugOptions,
                                   .transformState = updateParameters->transformState,
@@ -489,6 +499,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
+        util::RenderStage::set("orquestador: actualizar fuente", static_cast<uint64_t>(sourceImpl->type), 0);
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
         filteredLayersForSource.clear();
 
@@ -1068,6 +1079,7 @@ void RenderOrchestrator::updateTerrain(gfx::ShaderRegistry& shaders,
     }
     std::sort(surfaceTiles.begin(), surfaceTiles.end());
     surfaceTiles.erase(std::unique(surfaceTiles.begin(), surfaceTiles.end()), surfaceTiles.end());
+    util::RenderStage::set("orquestador: terreno", surfaceTiles.size());
     terrain->update(shaders, context, state, demSource, updateParameters->pixelRatio, surfaceTiles, changes);
 }
 

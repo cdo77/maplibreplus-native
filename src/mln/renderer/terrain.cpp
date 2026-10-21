@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/renderer/terrain.hpp>
 
 #include <mln/geometry/dem_data.hpp>
@@ -365,8 +366,8 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
     const auto drapeAreas = state.computeEcefDrapeAreas();
     globalDrapes = static_cast<float>(
         std::count_if(drapeAreas.begin(), drapeAreas.end(), [](const auto& area) { return area.global; }));
-    // Con las celdas como unica fuente de imagen (SurfaceMode >= 5, plan P4) los drapes no se renderizan: el terreno no los muestrea (u_cell_only).
-    const bool cellsOnly = util::SurfaceMode::instance().value() >= 5;
+    // Con las celdas como unica fuente de imagen (plan E2) los drapes no se renderizan: el terreno no los muestrea (u_cell_only).
+    const bool cellsOnly = util::SurfaceMode::instance().cells();
     for (size_t i = 0; i < drapes.size(); ++i) {
         drapes[i]->setActive(!cellsOnly);
         drapes[i]->setGeographicArea({.center = drapeAreas[i].center, .radiusMeters = drapeAreas[i].radiusMeters});
@@ -486,6 +487,7 @@ void RenderTerrain::update(gfx::ShaderRegistry& shaders,
                 visibleCells.push_back(base);
             }
         }
+        util::RenderStage::set("terreno: actualizar celdas", visibleCells.size());
         updateSurfaceCells(context, visibleCells, surfaceTiles, changes);
     }
 
@@ -845,7 +847,7 @@ void RenderTerrain::updateUniforms(PaintParameters& parameters) {
                                                 .cap_b = data.capColor ? (*data.capColor)[2] : 0.0f,
                                                 .cell_matrix = data.cellMatrix ? *data.cellMatrix : std::array<float, 16>{},
                                                 .cell_valid = data.cellMatrix ? 1.0f : 0.0f,
-                                                .cell_only = util::SurfaceMode::instance().value() >= 5 ? 1.0f : 0.0f,
+                                                .cell_only = util::SurfaceMode::instance().cells() ? 1.0f : 0.0f,
                                                 .cell_pad1 = 0.0f,
                                                 .cell_pad2 = 0.0f};
 

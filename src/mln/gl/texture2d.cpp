@@ -1,9 +1,11 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/gl/texture2d.hpp>
 #include <mln/gl/context.hpp>
 #include <mln/gl/defines.hpp>
 #include <mln/gl/enum.hpp>
 #include <mln/platform/gl_functions.hpp>
 #include <mln/util/instrumentation.hpp>
+#include <mln/util/logging.hpp>
 
 #include <vector>
 
@@ -129,18 +131,37 @@ void Texture2D::bind(int32_t location, int32_t textureUnit) noexcept {
     assert(gfx::MaxActiveTextureUnits > textureUnit);
     if (gfx::MaxActiveTextureUnits <= textureUnit) return;
 
+    // Verificacion profunda de GL (RenderStage::deepGlCheck): un error de GL aqui (INVALID_OPERATION tras enlazar texturas, medido en campo 2026-10-21) se registra con el paso exacto, el
+    // id de la textura, si GL la reconoce (glIsTexture), la unidad, la ubicacion del muestreador y el programa realmente activo en GL.
+    const auto deepCheck = [&](const char* step) {
+        if (!util::RenderStage::deepGlCheck()) return;
+        const auto glError = glGetError();
+        if (glError == GL_NO_ERROR || !util::RenderStage::takeDeepLogSlot()) return;
+        GLint currentProgram = 0;
+        glGetIntegerv(0x8B8D, &currentProgram);   // GL_CURRENT_PROGRAM
+        mln::Log::Error(mln::Event::General,
+                        std::string("GL-PROFUNDO textura ") + step + " error=" + std::to_string(glError) + " gl_id=" + std::to_string(getTextureID()) + " glIsTexture=" +
+                            (glIsTexture(getTextureID()) ? "si" : "no") + " unidad=" + std::to_string(textureUnit) + " ubicacion=" + std::to_string(location) +
+                            " programa_en_gl=" + std::to_string(currentProgram) + " tamano=" + std::to_string(size.width) + "x" + std::to_string(size.height));
+    };
+    deepCheck("heredado antes de enlazar");
+
     // Bind to the texture unit
     context.activeTextureUnit = static_cast<uint8_t>(textureUnit);
+    deepCheck("tras glActiveTexture");
     context.texture[static_cast<size_t>(textureUnit)] = getTextureID();
+    deepCheck("tras glBindTexture");
     boundTextureUnit = textureUnit;
 
     // Update the sampler state if it was changed after resource creation
     if (samplerStateDirty) {
         updateSamplerConfiguration();
+        deepCheck("tras configurar el muestreo");
     }
 
     // Link the bound texture unit with the requested sampler in the active shader
     glUniform1i(location, textureUnit);
+    deepCheck("tras glUniform1i");
     boundLocation = location;
 }
 
@@ -202,6 +223,7 @@ void Texture2D::uploadSubRegion(const void* pixelData, const Size& size_, uint16
 
 void Texture2D::upload() {
     if (image && image->valid()) {
+        util::RenderStage::set("subida de textura", image->size.width, image->size.height);
         if (preferRGB565) {
             // Imagen opaca (satelital) -> RGB565: mitad de memoria de GPU. Si algun pixel no es opaco se sube como RGBA8 (premultiplicada: perder el alfa cambiaria el color).
             const size_t count = static_cast<size_t>(image->size.width) * image->size.height;

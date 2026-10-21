@@ -1,3 +1,6 @@
+#include <mln/util/render_stage.hpp>
+#include <mln/gl/defines.hpp>
+#include <mln/platform/gl_functions.hpp>
 #include <mln/gl/drawable_gl.hpp>
 #include <mln/gl/drawable_gl_impl.hpp>
 #include <mln/gl/texture2d.hpp>
@@ -32,9 +35,10 @@ void DrawableGL::draw(PaintParameters& parameters) const {
 
     if (shader) {
         const auto& shaderGL = static_cast<const ShaderProgramGL&>(*shader);
-        if (shaderGL.getGLProgramID() != context.program.getCurrentValue()) {
-            context.program = shaderGL.getGLProgramID();
-        }
+        // La asignacion de State compara el valor Y el estado "sucio": no se pre-compara solo el valor. Antes (`if (id != getCurrentValue())`) un programa sucio con el mismo valor en cache
+        // no se volvia a activar; tras la pasada de imagen de las celdas (que activa su propio programa con GL directo y declara el estado sucio) el dibujo del terreno corria con el
+        // programa equivocado: glUniform1i daba GL_INVALID_OPERATION en cada cuadro y la pantalla quedaba con un bloque de color (medido en campo 2026-10-21, GL-PROFUNDO).
+        context.program = shaderGL.getGLProgramID();
     }
     if (!shader || context.program.getCurrentValue() == 0) {
         mln::Log::Warning(Event::General, "Missing shader for drawable " + util::toString(getID()) + "/" + getName());
@@ -71,8 +75,25 @@ void DrawableGL::draw(PaintParameters& parameters) const {
 
     context.setScissorTest(parameters.scissorRect);
 
+    // Verificacion profunda de GL (ver RenderStage::deepGlCheck): registra el dibujable que produce un error.
+    const auto deepCheck = [&](const char* phase) {
+        if (!util::RenderStage::deepGlCheck()) return;
+        const auto glError = platform::glGetError();
+        if (glError == GL_NO_ERROR || !util::RenderStage::takeDeepLogSlot()) return;
+        std::string tile = "-";
+        if (const auto& id = getTileID()) tile = std::to_string(id->canonical.z) + "/" + std::to_string(id->canonical.x) + "/" + std::to_string(id->canonical.y);
+        mln::Log::Error(Event::General,
+                        std::string("GL-PROFUNDO error ") + std::to_string(glError) + " " + phase + " | dibujable=" + getName() + " tesela=" + tile +
+                            " programa=" + std::to_string(shader ? static_cast<const ShaderProgramGL&>(*shader).getGLProgramID() : 0) + " pase=" +
+                            std::to_string(static_cast<int>(parameters.pass)) + " capa=" + std::to_string(parameters.currentLayer) + " segmentos=" +
+                            std::to_string(impl->segments.size()) + " scissor=" + std::to_string(parameters.scissorRect.x) + "," + std::to_string(parameters.scissorRect.y) + "," +
+                            std::to_string(parameters.scissorRect.width) + "," + std::to_string(parameters.scissorRect.height));
+    };
+    deepCheck("heredado: ya habia error antes de enlazar");
     impl->uniformBuffers.bind();
+    deepCheck("tras enlazar los UBO");
     bindTextures();
+    deepCheck("tras enlazar las texturas");
 
     for (const auto& seg : impl->segments) {
         const auto& glSeg = static_cast<DrawSegmentGL&>(*seg);
@@ -80,6 +101,7 @@ void DrawableGL::draw(PaintParameters& parameters) const {
         if (mlSeg.indexLength > 0 && glSeg.getVertexArray().isValid()) {
             context.bindVertexArray = glSeg.getVertexArray().getID();
             context.draw(glSeg.getMode(), mlSeg.indexOffset, mlSeg.indexLength);
+            deepCheck("tras dibujar el segmento");
         }
     }
     // Unbind the VAO so that future buffer commands outside Drawable do not change the current VAO state

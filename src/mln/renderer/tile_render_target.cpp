@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/util/sprite_altitude.hpp>
 #include <mln/util/surface_mode.hpp>
 #include <mln/renderer/surface_imagery_pass.hpp>
@@ -20,6 +21,10 @@
 
 #include <chrono>
 #include <cmath>
+#if MLN_RENDER_BACKEND_OPENGL
+#include <mln/gl/defines.hpp>
+#include <mln/platform/gl_functions.hpp>
+#endif
 
 namespace mln {
 
@@ -92,17 +97,16 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     // El recorte por celda se aplica SOLO a los grupos de imagen (raster), que retienen cientos de teselas; los grupos de vectores/GeoJSON (areas, geocercas, circulo de
     // precision) tienen pocos dibujables y NO se recortan: con recorte sus rellenos no se dibujaban en la celda (medido en campo, F3; causa exacta sin determinar).
     const util::SurfaceCull* const cullPtr = cull ? &*cull : nullptr;
-    // SurfaceMode 5 = pasada propia de imagen base (plan pasada-propia-superficie, P1): la imagen se dibuja aparte, directo sobre la textura de la celda; los grupos de vectores
-    // siguen por el camino de capas.
-    // SurfaceMode 6 = lo mismo que 5 mas recorte por scissor de cada dibujable a la huella de su tesela (fase P2).
-    const int surfaceMode = util::SurfaceMode::instance().value();
-    // SurfaceMode 7 = lo mismo que 6 mas mipmaps y filtro anisotropico en la textura de la celda (fase P3).
-    const bool ownImagery = cullPtr && (surfaceMode >= 5 && surfaceMode <= 9);
-    const util::SurfaceClipScope clipScope(cullPtr && (surfaceMode >= 6 && surfaceMode <= 9) ? cullPtr : nullptr);
+    // Una celda (cull) siempre usa la pasada propia: la imagen base se dibuja aparte, directo sobre la textura (surface_imagery_pass), y los grupos de vectores recortan cada dibujable
+    // a la huella de su tesela (SurfaceClipScope) y dibujan solo la tesela mas fina de cada zona. Las pasadas de los drapes (sin cull) no cambian.
+    util::RenderStage::set("pasada de celda", cullPtr ? 1 : 0);
+    const bool ownImagery = cullPtr != nullptr;
+    const util::SurfaceClipScope clipScope(cullPtr);
     const auto cullScopeFor = [&](const LayerGroupBase& layerGroup) {
         return util::SurfaceCullScope(cullPtr && orchestrator.layerGroupIsType(layerGroup, "raster") ? cullPtr : nullptr);
     };
     const auto passStart = std::chrono::steady_clock::now();
+    util::RenderStage::set("celda: matriz y pase", size_t(getTexture()->getSize().width), 0);
     const mat4 projMatrix = tileProjMatrix(parameters);
 
     parameters.renderPass = parameters.encoder->createRenderPass("tile render target",
@@ -121,7 +125,9 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
     const mat4* prevOverride = parameters.projMatrixOverride;
     parameters.projMatrixOverride = &projMatrix;
 
+    util::RenderStage::set("celda: imagen base");
     if (ownImagery) surface_pass::drawImagery(orchestrator, parameters, *cull);
+    util::RenderStage::set("celda: tweakers de capas");
 
     parameters.context.bindGlobalUniformBuffers(*parameters.renderPass);
 
@@ -154,6 +160,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
         parameters.currentLayer++;
     });
 
+    util::RenderStage::set("celda: capas opacas");
     parameters.pass = RenderPass::Opaque;
     parameters.depthRangeSize = 1 - (layerGroupCount + 2) * PaintParameters::numSublayers *
                                         PaintParameters::depthEpsilon;
@@ -166,6 +173,7 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
         parameters.currentLayer++;
     });
 
+    util::RenderStage::set("celda: capas translucidas");
     parameters.pass = RenderPass::Translucent;
     parameters.depthRangeSize = 1 - (layerGroupCount + 2) * PaintParameters::numSublayers *
                                         PaintParameters::depthEpsilon;
@@ -186,15 +194,17 @@ void TileRenderTarget::render(RenderOrchestrator& orchestrator,
 
     parameters.renderPass.reset();
     parameters.encoder->present(*offscreenTexture);
-    if (cullPtr && surfaceMode == 7) surface_pass::generateCellMipmaps(parameters, getTexture());
 
     parameters.scissorRect = prevScissorRect;
 
-    // Costo de la pasada por celda (plan E2, F2). Con SurfaceMode 3 se espera a la GPU para medir el tiempo real y no solo el de armar los comandos.
-    if (cull) {
 #if MLN_RENDER_BACKEND_OPENGL
-        if (util::SurfaceMode::instance().value() == 3) static_cast<gl::Context&>(parameters.context).finish();
+    // Diagnostico de campo: un error de GL en la pasada de una celda queda anotado con el lugar (la traza de cuadros de MapRenderer lo muestra).
+    if (cull) {
+        if (const auto glError = platform::glGetError(); glError != GL_NO_ERROR) util::RenderStage::noteGlError("fin de la pasada de celda", glError);
+    }
 #endif
+    // Costo de la pasada por celda (CPU), para el log de diagnostico.
+    if (cull) {
         util::SurfaceStats::instance().add(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - passStart).count());
     }

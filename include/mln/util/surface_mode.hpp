@@ -5,10 +5,8 @@
 namespace mln {
 namespace util {
 
-/// Modo de la superficie del terreno 3D (ADR 0059, plan E2): interruptor de la capacidad nueva (invariante 9).
-///   0 = DRAPES  (por defecto): el camino de siempre, sin una linea tocada.
-///   1 = CELLS_DRY (F2): ademas de los drapes, renderiza las celdas al pool de texturas SIN usarlas (solo para medir costo y memoria).
-///   2 = CELLS (F3): el terreno muestra la superficie por celda.
+/// Superficie del terreno 3D (ADR 0059, plan E2): `0` = clasica con drapes (por defecto, el camino de siempre); cualquier valor > 0 = celdas: cada celda del terreno tiene su textura,
+/// la imagen la piden las celdas visibles, los drapes no se renderizan y las teselas de imagen se suben en RGB565. Se fija desde la app (Configuraciones > Mapa 3D) con `setSurfaceMode`.
 class SurfaceMode {
 public:
     static SurfaceMode& instance() {
@@ -17,6 +15,7 @@ public:
     }
     void set(int value) { mode.store(value < 0 ? 0 : value); }
     int value() const { return mode.load(); }
+    bool cells() const { return mode.load() > 0; }
 
 private:
     std::atomic<int> mode{0};

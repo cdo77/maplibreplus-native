@@ -161,8 +161,8 @@ void RenderRasterLayer::update(gfx::ShaderRegistry& shaders,
         if (bucket.image) {
             if (!bucket.texture2d) {
                 if (auto tex = context.createTexture2D()) {
-                    // Plan E2, P4 (SurfaceMode 8): teselas de imagen en RGB565, la mitad de memoria de GPU.
-                    tex->setPreferRGB565(util::SurfaceMode::instance().value() >= 8);
+                    // Celdas (plan E2): teselas de imagen en RGB565, la mitad de memoria de GPU.
+                    tex->setPreferRGB565(util::SurfaceMode::instance().cells());
                     tex->setImage(bucket.image);
                     bucket.texture2d = std::move(tex);
                 }

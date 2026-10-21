@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/gl/layer_group_gl.hpp>
 
 #include <mln/gfx/drawable_tweaker.hpp>
@@ -141,6 +142,7 @@ void TileLayerGroupGL::render(RenderOrchestrator&, PaintParameters& parameters) 
     // Dentro de una celda (fase P2), los grupos de vectores no se recortan por celda y retienen las teselas de TODOS los niveles que cubren la zona; dibujar el mismo poligono desde
     // dos o tres niveles suma la opacidad del relleno translucido (los "cuadrados" del circulo de precision, medido: el mismo relleno entraba desde z10, z16 y z18). Se dibuja
     // solo la tesela mas fina que cubre cada zona: se salta una tesela si otra del mismo grupo que se solapa con la celda es descendiente suya.
+    util::RenderStage::set("capa: teselas en la celda");
     std::vector<OverscaledTileID> tilesInCell;
     const util::SurfaceCull* const cellClip = util::SurfaceCull::clip();
     if (cellClip && !util::SurfaceCull::current()) {

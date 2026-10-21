@@ -1,3 +1,8 @@
+#include <algorithm>
+#include <mln/renderer/update_parameters.hpp>
+#include <chrono>
+#include <GLES3/gl3.h>
+#include <mln/util/render_stage.hpp>
 #include "map_renderer.hpp"
 
 #include <mln/gfx/backend_scope.hpp>
@@ -36,6 +41,47 @@ bool inEmulator() {
 
 namespace mln {
 namespace android {
+
+namespace {
+// Traza de cuadros (diagnostico de campo): los ultimos 64 cuadros con su costo, camara, error de GL y estado de GL al terminar. Se vuelca al log ante una anomalia (excepcion, error de GL,
+// cuadro de mas de 250 ms o un FBO distinto del de pantalla al terminar) para ver el estado en el momento del fallo y no solo el mensaje.
+struct FrameRecord {
+    uint64_t number = 0;
+    int64_t micros = 0;
+    double zoom = 0.0;
+    double pitchDeg = 0.0;
+    uint32_t glError = 0;
+    int viewport[4] = {0, 0, 0, 0};
+    int scissorTest = 0;
+    int framebuffer = 0;
+    std::string stage;
+};
+constexpr size_t kTraceSize = 64;
+FrameRecord traceRing[kTraceSize];
+uint64_t traceFrames = 0;
+int64_t lastTraceDumpMs = 0;
+int64_t lastDeepEnableMs = 0;
+int cleanFramesSinceGlError = 0;
+
+int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void dumpTrace(const std::string& reason) {
+    const int64_t now = nowMs();
+    if (now - lastTraceDumpMs < 5000) return;
+    lastTraceDumpMs = now;
+    Log::Error(Event::Android, "TRAZA-RENDER motivo: " + reason + " | " + util::RenderStage::describe() + " | " + util::RenderStage::describeGl());
+    const size_t count = std::min<uint64_t>(traceFrames, 24);
+    for (size_t i = 0; i < count; ++i) {
+        const FrameRecord& r = traceRing[(traceFrames - count + i) % kTraceSize];
+        Log::Error(Event::Android,
+                   "TRAZA-RENDER cuadro=" + std::to_string(r.number) + " us=" + std::to_string(r.micros) + " zoom=" + std::to_string(r.zoom) + " inclin=" + std::to_string(r.pitchDeg) +
+                       " gl_error=" + std::to_string(r.glError) + " vp=" + std::to_string(r.viewport[0]) + "," + std::to_string(r.viewport[1]) + "," + std::to_string(r.viewport[2]) + "," +
+                       std::to_string(r.viewport[3]) + " scissor=" + std::to_string(r.scissorTest) + " fbo=" + std::to_string(r.framebuffer) + " etapa=" + r.stage);
+    }
+}
+} // namespace
 
 MapRenderer::MapRenderer(jni::JNIEnv& _env,
                          const jni::Object<MapRenderer>& obj,
@@ -242,7 +288,61 @@ void MapRenderer::render(JNIEnv&) {
         framebufferSizeChanged = false;
     }
 
-    renderer->render(params);
+    const auto frameStart = std::chrono::steady_clock::now();
+    try {
+        renderer->render(params);
+        consecutiveRenderFailures = 0;
+    } catch (const std::exception& exception) {
+        // El log solo decia "std::bad_alloc": se registra en que etapa del render estaba y con que cantidades. Antes se relanzaba la excepcion: el cuadro quedaba sin dibujar (memoria sin
+        // inicializar en pantalla) y, sin nadie que pidiera otro cuadro, la pantalla quedaba congelada con basura hasta el siguiente toque (medido en campo 2026-10-20). Ahora se pide otro
+        // cuadro (hasta 30 seguidos; si todos fallan se corta para no girar en vacio).
+        ++consecutiveRenderFailures;
+        Log::Error(Event::Android,
+                   std::string("MapRenderer::render fallo (") + exception.what() + ") en la etapa: " + util::RenderStage::describe() +
+                       " seguidos=" + std::to_string(consecutiveRenderFailures));
+        dumpTrace(std::string("excepcion ") + exception.what());
+        if (consecutiveRenderFailures <= 30) requestRender();
+        return;
+    }
+
+    // Traza del cuadro: estado de GL al terminar y costo.
+    {
+        FrameRecord& r = traceRing[traceFrames % kTraceSize];
+        r.number = ++traceFrames;
+        r.micros = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - frameStart).count();
+        r.zoom = params->transformState.getZoom();
+        r.pitchDeg = params->transformState.getPitch() * 180.0 / 3.14159265358979;
+        r.glError = 0;
+        for (int guard = 0; guard < 8; ++guard) {
+            const GLenum e = glGetError();
+            if (e == GL_NO_ERROR) break;
+            if (r.glError == 0) r.glError = e;
+        }
+        GLint vp[4] = {0, 0, 0, 0};
+        glGetIntegerv(GL_VIEWPORT, vp);
+        GLint fbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+        for (int i = 0; i < 4; ++i) r.viewport[i] = vp[i];
+        r.scissorTest = glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0;
+        r.framebuffer = fbo;
+        r.stage = util::RenderStage::describe();
+        if (r.glError != 0) util::RenderStage::noteGlError("fin del cuadro", r.glError);
+        // Verificacion profunda: tras un cuadro con error de GL se enciende para los proximos (cada dibujable comprueba glGetError y registra cual produce el error); se apaga tras 300 cuadros limpios.
+        if (r.glError != 0) {
+            // Se vuelve a encender como mucho una vez cada 10 s (con un error persistente cada cuadro, sin esto el log se llenaria).
+            if (!util::RenderStage::deepGlCheck() && nowMs() - lastDeepEnableMs > 10000) {
+                lastDeepEnableMs = nowMs();
+                Log::Error(Event::Android, "GL-PROFUNDO encendido tras un error de GL (" + std::to_string(r.glError) + ") en la etapa: " + util::RenderStage::describe());
+                util::RenderStage::enableDeepGl(60);
+            }
+            cleanFramesSinceGlError = 0;
+        } else if (util::RenderStage::deepGlCheck() && ++cleanFramesSinceGlError > 300) {
+            util::RenderStage::disableDeepGl();
+        }
+        if (r.glError != 0) dumpTrace("error de GL al terminar el cuadro");
+        else if (r.micros > 250000) dumpTrace("cuadro lento");
+        else if (fbo != 0) dumpTrace("FBO distinto del de pantalla al terminar");
+    }
 
     // Deliver the snapshot if requested
     if (snapshotCallback) {

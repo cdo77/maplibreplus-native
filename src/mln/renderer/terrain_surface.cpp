@@ -22,7 +22,7 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
                                        const std::vector<VisibleCell>& visible,
                                        const std::vector<OverscaledTileID>& surfaceTiles,
                                        UniqueChangeRequestVec& changes) {
-    if (util::SurfaceMode::instance().value() <= 0) {
+    if (!util::SurfaceMode::instance().cells()) {
         if (!cellTargets.empty() || surfacePool.count() > 0) teardownSurfaceCells(changes);
         return;
     }
@@ -80,8 +80,8 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
         }
     }
 
-    // Estadisticas de la ventana (cada ~2 s a 60 fps): lo que la F2 tiene que medir.
-    if (++surfaceWindowFrames >= 120) {
+    // Diagnostico de campo (cada ~10 s a 60 fps): celdas, memoria, uso de texturas por sub-tile y reuso de teselas de imagen.
+    if (++surfaceWindowFrames >= 600) {
         const auto& st = surfacePool.stats();
         const auto passes = util::SurfaceStats::instance().takeWindow();
         // Reconocimiento de memoria (plan P4): teselas de imagen retenidas por nivel de zoom y su peso estimado como RGBA8 de 256x256 (256 KB c/u, como las sube el motor).
@@ -94,8 +94,8 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
             for (const OverscaledTileID& t : surfaceTilesPrev) ++byZ[t.canonical.z];
             for (const auto& [z, n] : byZ) tilesPerZ += "z" + std::to_string(z) + ":" + std::to_string(n) + " ";
         }
-        Log::Warning(Event::General,
-                     "E2-CELDAS modo=" + std::to_string(util::SurfaceMode::instance().value()) + " visibles=" + std::to_string(visible.size()) +
+        Log::Info(Event::General,
+                     "E2-CELDAS visibles=" + std::to_string(visible.size()) +
                          " planificadas_por_frame=" + std::to_string(static_cast<double>(surfacePlannedWindow) / static_cast<double>(surfaceWindowFrames)) +
                          " texturas=" + std::to_string(surfacePool.count()) + " pool_mb=" + std::to_string(surfacePool.bytesInUse() / (1024.0 * 1024.0)) +
                          " reuso_mb=" + std::to_string(surfacePool.bytesInReusePool() / (1024.0 * 1024.0)) + " pico_mb=" +
@@ -116,7 +116,7 @@ void RenderTerrain::updateSurfaceCells(gfx::Context& context,
 }
 
 std::optional<RenderTerrain::SurfaceCellChoice> RenderTerrain::chooseSurfaceCell(const CellKey& key) const {
-    if (util::SurfaceMode::instance().value() < 2) return std::nullopt;
+    if (!util::SurfaceMode::instance().cells()) return std::nullopt;
 
     // Usable = ya se renderizo al menos una vez (renderedAtMs > 0): una celda sucia conserva su imagen vieja y se muestra hasta que llegue la nueva.
     const auto usable = [&](const CellKey& k) -> const Entry* {
@@ -161,7 +161,7 @@ void RenderTerrain::teardownSurfaceCells(UniqueChangeRequestVec& changes) {
         changes.emplace_back(std::make_unique<RemoveRenderTargetRequest>(target));
     }
     cellTargets.clear();
-    surfacePool = SurfacePool(PoolConfig{256u * 1024u * 1024u, 4u});
+    surfacePool = SurfacePool(PoolConfig{128u * 1024u * 1024u, 4u});
     surfaceFrame = 0;
     surfaceTilesPrev.clear();
     surfacePlannedWindow = 0;

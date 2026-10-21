@@ -1,3 +1,4 @@
+#include <mln/util/render_stage.hpp>
 #include <mln/renderer/surface_imagery_pass.hpp>
 
 #if MLN_RENDER_BACKEND_OPENGL
@@ -136,6 +137,7 @@ struct Quad {
 } // namespace
 
 void drawImagery(RenderOrchestrator& orchestrator, PaintParameters& parameters, const util::SurfaceCull& cell) {
+    util::RenderStage::set("imagen base: recolectando teselas");
     std::vector<Quad> quads;
     {
         const util::SurfaceCullScope scope(&cell);
@@ -152,21 +154,33 @@ void drawImagery(RenderOrchestrator& orchestrator, PaintParameters& parameters, 
                 const double u0 = static_cast<double>(id->canonical.x) / s - static_cast<double>(cell.x);
                 const double v0 = static_cast<double>(id->canonical.y) / s - static_cast<double>(cell.y);
                 const double w = 1.0 / s;
-                // Recortado de la celda: el norte es +1 en NDC y la fila 0 de la imagen de la tesela es el norte (t = 0).
-                const auto x0 = static_cast<float>(2.0 * u0 - 1.0);
-                const auto x1 = static_cast<float>(2.0 * (u0 + w) - 1.0);
-                const auto yn = static_cast<float>(1.0 - 2.0 * v0);
-                const auto ys = static_cast<float>(1.0 - 2.0 * (v0 + w));
+                // Se recorta a la celda ([0,1]) en doble precision y la UV se ajusta al recorte. Una tesela muy gruesa (el piso mundial z6 bajo una celda z21 la agranda 32768 veces) daria
+                // vertices de decenas de miles de NDC: sin recorte el float pierde pixeles y el recorte de la GPU falla (celdas en blanco o de colores).
+                const double cu0 = std::max(u0, 0.0);
+                const double cu1 = std::min(u0 + w, 1.0);
+                const double cv0 = std::max(v0, 0.0);
+                const double cv1 = std::min(v0 + w, 1.0);
+                if (cu1 <= cu0 || cv1 <= cv0) return;
+                // El norte es +1 en NDC y la fila 0 de la imagen de la tesela es el norte (t = 0).
+                const auto x0 = static_cast<float>(2.0 * cu0 - 1.0);
+                const auto x1 = static_cast<float>(2.0 * cu1 - 1.0);
+                const auto yn = static_cast<float>(1.0 - 2.0 * cv0);
+                const auto ys = static_cast<float>(1.0 - 2.0 * cv1);
+                const auto tu0 = static_cast<float>((cu0 - u0) / w);
+                const auto tu1 = static_cast<float>((cu1 - u0) / w);
+                const auto tv0 = static_cast<float>((cv0 - v0) / w);
+                const auto tv1 = static_cast<float>((cv1 - v0) / w);
 
                 Quad q;
                 q.z = id->canonical.z;
                 q.texture = static_cast<const gl::Texture2D&>(*texture).getTextureID();
-                const float v[16] = {x0, yn, 0.0f, 0.0f, x1, yn, 1.0f, 0.0f, x0, ys, 0.0f, 1.0f, x1, ys, 1.0f, 1.0f};
+                const float v[16] = {x0, yn, tu0, tv0, x1, yn, tu1, tv0, x0, ys, tu0, tv1, x1, ys, tu1, tv1};
                 std::copy(std::begin(v), std::end(v), q.vertices);
                 quads.push_back(q);
             });
         });
     }
+    util::RenderStage::set("pasada de imagen: cuadros", quads.size());
     if (quads.empty()) return;
     // De la tesela mas gruesa a la mas fina: la fina pisa a la gruesa donde se solapan.
     std::stable_sort(quads.begin(), quads.end(), [](const Quad& a, const Quad& b) { return a.z < b.z; });
@@ -209,27 +223,6 @@ void drawImagery(RenderOrchestrator& orchestrator, PaintParameters& parameters, 
     static_cast<gl::Context&>(parameters.context).setDirtyState();
 }
 
-void generateCellMipmaps(PaintParameters& parameters, const gfx::Texture2DPtr& texture) {
-    if (!texture) return;
-    // Extension anisotropica (constantes de GL_EXT_texture_filter_anisotropic): se consulta una sola vez.
-    constexpr GLenum kTextureMaxAnisotropy = 0x84FE;
-    constexpr GLenum kMaxTextureMaxAnisotropy = 0x84FF;
-    static const float maxAnisotropy = [] {
-        const auto* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
-        if (!extensions || !std::strstr(extensions, "GL_EXT_texture_filter_anisotropic")) return 1.0f;
-        GLfloat value = 1.0f;
-        glGetFloatv(kMaxTextureMaxAnisotropy, &value);
-        return std::min(value, 8.0f);
-    }();
-
-    glBindTexture(GL_TEXTURE_2D, static_cast<const gl::Texture2D&>(*texture).getTextureID());
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    if (maxAnisotropy > 1.0f) glTexParameterf(GL_TEXTURE_2D, kTextureMaxAnisotropy, maxAnisotropy);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    static_cast<gl::Context&>(parameters.context).setDirtyState();
-}
-
 } // namespace surface_pass
 } // namespace mln
 
@@ -238,7 +231,6 @@ void generateCellMipmaps(PaintParameters& parameters, const gfx::Texture2DPtr& t
 namespace mln {
 namespace surface_pass {
 void drawImagery(RenderOrchestrator&, PaintParameters&, const util::SurfaceCull&) {}
-void generateCellMipmaps(PaintParameters&, const gfx::Texture2DPtr&) {}
 } // namespace surface_pass
 } // namespace mln
 
