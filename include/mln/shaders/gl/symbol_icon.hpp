@@ -331,7 +331,14 @@ lowp float opacity = u_opacity;
             // Cara de espaldas: se descarta (la pieza se ve solida sin ordenar las caras). El sentido lo fija la app (cullSign).
             bool back = u_ecef_model.z != 0.0 && winding * u_ecef_model.z > 0.0;
             vec4 lm = u_label_plane_matrix * vec4(cm.xy / cm.w, 0.0, 1.0);
-            gl_Position = u_coord_matrix * vec4(lm.xy / lm.w, 0.0, 1.0);
+            // Cada cara se agranda 1,5 px hacia afuera de su centro: el borde de la imagen se mezcla con lo transparente del atlas y entre
+            // caras vecinas quedaba una rendija por la que se veia el mapa. Solapadas, la pieza queda cerrada.
+            vec2 pm = lm.xy / lm.w;
+            vec2 cen = (p0 + p1 + p2) / 3.0;
+            vec2 away = pm - cen;
+            float away_len = length(away);
+            pm += away_len > 0.001 ? away / away_len * 1.5 : vec2(0.0);
+            gl_Position = u_coord_matrix * vec4(pm, 0.0, 1.0);
             depth_point = back ? vec4(0.0, 0.0, 0.0, -1.0) : cm;
         }
     }
