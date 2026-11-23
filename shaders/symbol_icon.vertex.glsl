@@ -240,7 +240,9 @@ void main() {
         // La esquina en el marco del icono, sin el giro que le aplico el layout (icon-rotate = el rumbo, en sentido horario con y hacia abajo).
         float rb = u_ecef_ground.y;
         vec2 o = a_offset / 32.0 * max(a_minFontScale, fontScale);
-        vec2 icon_px = vec2(o.x * cos(rb) + o.y * sin(rb), -o.x * sin(rb) + o.y * cos(rb));
+        // La pieza 3D y su sombra (cara >= 1) no giran en el layout (icon-rotate 0): el giro lo pone SOLO este rumbo, el mismo para todas sus
+        // capas en el cuadro. Si dependieran del giro del layout, que se rehace por capa en otro hilo, al girar se desarmaban (ADR 0106).
+        vec2 icon_px = u_ecef_model.x > 0.5 ? o : vec2(o.x * cos(rb) + o.y * sin(rb), -o.x * sin(rb) + o.y * cos(rb));
         // Metros por pixel a la distancia del ancla (camara real de 45 grados): el icono mide en el suelo lo que mide hoy en pantalla.
         float half_h_px = -1.0 / u_coord_matrix[1][1];
         // En 3D se agranda un cuarto: apoyado en el piso se ve menos que parado.
@@ -273,7 +275,7 @@ void main() {
         depth_point = corner_clip;
 
         int face = int(u_ecef_model.x + 0.5);
-        if (face >= 1) {
+        if (face >= 1 && face <= 6) {
             // Pieza 3D (ADR 0106): la silueta del chevron con un lomo recto de la punta a la muesca, arriba y abajo (rombo visto de atras,
             // cuna de costado). En el marco del icono, en fracciones del medio ancho (W) y medio alto (H): punta (0, 0,9H), alas (+-0,84W,
             // -0,88H), muesca arriba/abajo (0, -0,5H, +-t W). Esta capa dibuja UNA cara: sus tres vertices en las esquinas del quad (la cuarta
