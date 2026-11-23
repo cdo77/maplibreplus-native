@@ -65,6 +65,7 @@ layout (std140) uniform SymbolDrawableUBO {
     lowp float ecef_pad2;
     lowp float ecef_pad3;
     highp vec4 u_ecef_exact;
+    highp vec4 u_ecef_ground;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {

@@ -57,6 +57,7 @@ layout (std140) uniform SymbolDrawableUBO {
     highp float u_ecef_altitude_m;
     highp float u_ecef_airborne_agl;
     highp vec4 u_ecef_exact;
+    highp vec4 u_ecef_ground;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -211,8 +212,10 @@ lowp float opacity = u_opacity;
     vec4 projected_pos = ecef_mode
         ? u_label_plane_matrix * vec4(projectedPoint.xy / projectedPoint.w, 0.0, 1.0)
         : u_label_plane_matrix * vec4(a_projected_pos.xy, 0.0, 1.0);
+    // Apoyado en el suelo (ADR 0106): no se para sobre el ancla.
+    bool ground_mode = ecef_mode && !stick_mode && u_ecef_ground.x > 0.5;
     // Camara real inclinada: el icono se para sobre el ancla (sube u_ecef_stand_px en pantalla), como ATAK.
-    if (ecef_mode && !stick_mode) {
+    if (ecef_mode && !stick_mode && !ground_mode) {
         projected_pos.y -= u_ecef_stand_px * projected_pos.w;
     }
     vec2 corner_px = rotation_matrix * (a_offset / 32.0 * max(a_minFontScale, fontScale) + a_pxoffset / 16.0);
@@ -239,13 +242,36 @@ lowp float opacity = u_opacity;
         stick_hidden = len < 1.0 || ground_clip.w <= 0.0;
     }
     gl_Position = u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + corner_px, 0.0, 1.0);
+    if (ground_mode) {
+        // La esquina en el marco del icono, sin el giro que le aplico el layout (icon-rotate = el rumbo, en sentido horario con y hacia abajo).
+        float rb = u_ecef_ground.y;
+        vec2 o = a_offset / 32.0 * max(a_minFontScale, fontScale);
+        vec2 icon_px = vec2(o.x * cos(rb) + o.y * sin(rb), -o.x * sin(rb) + o.y * cos(rb));
+        // Metros por pixel a la distancia del ancla (camara real de 45 grados): el icono mide en el suelo lo que mide hoy en pantalla.
+        float half_h_px = -1.0 / u_coord_matrix[1][1];
+        float m_per_px = max(projectedPoint.w, 0.0) * 0.41421356 / half_h_px;
+        float fwd_m = -icon_px.y * m_per_px;
+        float right_m = icon_px.x * m_per_px;
+        // Adelante y a la derecha en coordenadas de tile (x al este, y al sur).
+        vec2 fwd_dir = vec2(sin(rb), -cos(rb));
+        vec2 right_dir = vec2(cos(rb), sin(rb));
+        float lift = u_ecef_ground.w;
+        vec2 tile_off = (fwd_dir * fwd_m * cos(lift) + right_dir * right_m) * u_ecef_ground.z;
+        // La punta se levanta girando sobre la cola: la cola queda en el suelo.
+        float h_off = (fwd_m + abs(fwd_m)) * sin(lift);
+        vec4 corner_clip = ecef_project(a_pos + tile_off, anchor_elevation + h_off);
+        vec4 corner_lp = u_label_plane_matrix * vec4(corner_clip.xy / corner_clip.w, 0.0, 1.0);
+        gl_Position = u_coord_matrix * vec4(corner_lp.xy / corner_lp.w, 0.0, 1.0);
+        depth_point = corner_clip;
+    }
     if (ecef_mode) {
         // Como los sprites de ATAK (BatchGeometryPoints.vert), el icono se adelanta hacia la camara su propio
         // radio en metros -- radio en px x metros/px a esa distancia --, asi el relieve no lo tapa aunque el
         // ancla quede unos metros bajo la malla. Escalar el punto por s alrededor del ojo deja x, y, w
         // multiplicados por s y z = s (z - B) + B; s = 1 - radio/distancia = 1 - radio_px tan(fov/2) / (alto/2)
         // (fov 45 de la camara real, alto/2 = -1/u_coord_matrix[1][1]). Detras de la camara (w <= 0): fuera.
-        float radius_px = stick_mode ? 0.0 : length(a_offset / 32.0 * max(a_minFontScale, fontScale));
+        // Apoyado en el suelo, adelantarlo todo su radio lo despegaria: alcanza con un cuarto para no pelearse con la malla.
+        float radius_px = stick_mode ? 0.0 : length(a_offset / 32.0 * max(a_minFontScale, fontScale)) * (ground_mode ? 0.25 : 1.0);
         float half_height_px = -1.0 / u_coord_matrix[1][1];
         float s = max(1.0 - radius_px * 0.41421356 / half_height_px, 0.05);
         gl_Position.z = (depth_point.w > 0.0 && !stick_hidden)

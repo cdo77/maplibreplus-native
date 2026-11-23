@@ -50,6 +50,44 @@ private:
     std::unordered_map<std::string, SpriteAltitude> entries;
 };
 
+/// Sprites apoyados en el suelo con la camara real (ADR 0106): en vez de pararse de frente a la camara, el icono se dibuja sobre el plano
+/// del terreno, orientado con `bearingDeg` (horario desde el norte) y con la punta levantada `liftDeg` para que no se vuelva una raya con la
+/// vista rasante. Mantiene el tamano en pixeles (sus metros salen de la distancia a la camara). Lo usa el marcador propio: asi apunta de verdad
+/// por la calle en la perspectiva. La capa debe rotar con el mapa (icon-rotate = el mismo rumbo): el shader deshace ese giro del layout.
+struct SpriteGround {
+    double bearingDeg = 0.0;
+    float liftDeg = 0.0f;
+};
+
+class SpriteGroundRegistry {
+public:
+    static SpriteGroundRegistry& get() {
+        static SpriteGroundRegistry instance;
+        return instance;
+    }
+
+    void set(const std::string& layerId, const SpriteGround& value) {
+        std::lock_guard<std::mutex> lock(mutex);
+        entries[layerId] = value;
+    }
+
+    void clear(const std::string& layerId) {
+        std::lock_guard<std::mutex> lock(mutex);
+        entries.erase(layerId);
+    }
+
+    std::optional<SpriteGround> find(const std::string& layerId) const {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto it = entries.find(layerId);
+        if (it == entries.end()) return std::nullopt;
+        return it->second;
+    }
+
+private:
+    mutable std::mutex mutex;
+    std::unordered_map<std::string, SpriteGround> entries;
+};
+
 /// Capas de linea que se dibujan en el pase propio de la camara real (ADR 0058) en vez de en los drapes del terreno:
 /// geometria con pixeles fijos y profundidad contra la malla, sin los bordes dobles/borrosos de los drapes multi-resolucion.
 /// Es opt-in por capa: las demas lineas del estilo siguen igual. Solo lineas simples (sin patron, gradiente ni guiones).

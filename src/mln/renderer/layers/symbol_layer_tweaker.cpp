@@ -160,6 +160,7 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         float ecefAirborneAgl = 0.0f;
         std::array<float, 4> ecefExact = {0.0f, 0.0f, 0.0f, 0.0f};
         std::array<float, 2> ecefHeightmapOffset = {0.0f, 0.0f};
+        std::array<float, 4> ecefGround = {0.0f, 0.0f, 0.0f, 0.0f};
         if (ecefSprites) {
             // Tiles gruesos (z <= kEcefExactMaxZoom, es decir de mas de ~10 km de lado y por eso lejos del ojo): la afin plana por
             // tile hunde el ancla por la curvatura (un dispositivo lejos del foco desde el globo, ADR 0038); el shader ubica cada
@@ -190,6 +191,16 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             if (const auto altitude = util::SpriteAltitudeRegistry::get().find(getID())) {
                 ecefAltitudeM = static_cast<float>(altitude->altitudeM);
                 ecefAirborneAgl = altitude->stick ? -altitude->minAglM : altitude->minAglM;
+            }
+            // Apoyado en el suelo (ADR 0106): unidades de tile por metro a la latitud del centro del tile (el marcador es chico: alcanza).
+            if (const auto ground = util::SpriteGroundRegistry::get().find(getID())) {
+                const double n = std::pow(2.0, tileID.canonical.z);
+                const double latRad = std::atan(std::sinh(M_PI * (1.0 - 2.0 * (tileID.canonical.y + 0.5) / n)));
+                const double tileMeters = 40075016.686 * std::cos(latRad) / n;
+                ecefGround = {1.0f,
+                              static_cast<float>(ground->bearingDeg * M_PI / 180.0),
+                              static_cast<float>(util::EXTENT / tileMeters),
+                              static_cast<float>(ground->liftDeg * M_PI / 180.0)};
             }
         }
 
@@ -256,6 +267,7 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .ecef_altitude_m = ecefAltitudeM,
             .ecef_airborne_agl = ecefAirborneAgl,
             .ecef_exact = ecefExact,
+            .ecef_ground = ecefGround,
         };
 
 #if MLN_UBO_CONSOLIDATION

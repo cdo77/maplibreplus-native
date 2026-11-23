@@ -385,6 +385,22 @@ final class NativeMapView implements NativeMap {
   }
 
   @Override
+  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg) {
+    if (checkState("setSpriteGround")) {
+      return;
+    }
+    nativeSetSpriteGround(layerId, bearingDeg, liftDeg);
+  }
+
+  @Override
+  public void clearSpriteGround(@NonNull String layerId) {
+    if (checkState("clearSpriteGround")) {
+      return;
+    }
+    nativeClearSpriteGround(layerId);
+  }
+
+  @Override
   public boolean isRealAltitudeModeEnabled() {
     if (checkState("isRealAltitudeModeEnabled")) {
       return false;
@@ -1559,6 +1575,10 @@ final class NativeMapView implements NativeMap {
   private native void nativeSetSpriteAltitude(@NonNull String layerId, double altitudeMeters, float minAglMeters, boolean stick);
 
   private native void nativeClearSpriteAltitude(@NonNull String layerId);
+
+  private native void nativeSetSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg);
+
+  private native void nativeClearSpriteGround(@NonNull String layerId);
 
   private native void nativeSetEcefLine(@NonNull String layerId, boolean on);
 

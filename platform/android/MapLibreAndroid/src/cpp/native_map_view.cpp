@@ -543,6 +543,19 @@ void NativeMapView::clearSpriteAltitude(jni::JNIEnv& env, const jni::String& lay
     map->triggerRepaint();
 }
 
+void NativeMapView::setSpriteGround(jni::JNIEnv& env, const jni::String& layerId, jni::jdouble bearingDeg, jni::jfloat liftDeg) {
+    mln::util::SpriteGround value;
+    value.bearingDeg = bearingDeg;
+    value.liftDeg = liftDeg;
+    mln::util::SpriteGroundRegistry::get().set(jni::Make<std::string>(env, layerId), value);
+    map->triggerRepaint();
+}
+
+void NativeMapView::clearSpriteGround(jni::JNIEnv& env, const jni::String& layerId) {
+    mln::util::SpriteGroundRegistry::get().clear(jni::Make<std::string>(env, layerId));
+    map->triggerRepaint();
+}
+
 jni::jboolean NativeMapView::isRealAltitudeModeEnabled(jni::JNIEnv&) {
     return map->isRealAltitudeModeEnabled();
 }
@@ -1469,6 +1482,8 @@ void NativeMapView::registerNative(jni::JNIEnv& env) {
         METHOD(&NativeMapView::setRealAltitudeMode, "nativeSetRealAltitudeMode"),
         METHOD(&NativeMapView::setSpriteAltitude, "nativeSetSpriteAltitude"),
         METHOD(&NativeMapView::clearSpriteAltitude, "nativeClearSpriteAltitude"),
+        METHOD(&NativeMapView::setSpriteGround, "nativeSetSpriteGround"),
+        METHOD(&NativeMapView::clearSpriteGround, "nativeClearSpriteGround"),
         METHOD(&NativeMapView::setEcefLine, "nativeSetEcefLine"),
         METHOD(&NativeMapView::setSurfaceMode, "nativeSetSurfaceMode"),
         METHOD(&NativeMapView::isRealAltitudeModeEnabled, "nativeIsRealAltitudeModeEnabled"),

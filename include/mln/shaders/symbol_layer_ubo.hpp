@@ -46,9 +46,11 @@ struct alignas(16) SymbolDrawableUBO {
     // Posicion exacta por ancla para tiles gruesos (ADR 0058, vista de globo): origen mercator del tile (x, y), mercator por
     // unidad de tile y bandera (> 0,5 = exacto). En tiles chicos queda en 0 y se usa la afin local de siempre.
     /* 288 */ std::array<float, 4> ecef_exact;
-    /* 304 */
+    // Sprite apoyado en el suelo (ADR 0106): bandera (> 0,5), rumbo en radianes, unidades de tile por metro y levante de la punta en radianes.
+    /* 304 */ std::array<float, 4> ecef_ground;
+    /* 320 */
 };
-static_assert(sizeof(SymbolDrawableUBO) == 19 * 16);
+static_assert(sizeof(SymbolDrawableUBO) == 20 * 16);
 
 struct alignas(16) SymbolTilePropsUBO {
     /*  0 */ /*bool*/ int is_text;
