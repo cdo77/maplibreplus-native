@@ -161,6 +161,11 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
         std::array<float, 4> ecefExact = {0.0f, 0.0f, 0.0f, 0.0f};
         std::array<float, 2> ecefHeightmapOffset = {0.0f, 0.0f};
         std::array<float, 4> ecefGround = {0.0f, 0.0f, 0.0f, 0.0f};
+        std::array<float, 4> ecefModel = {0.0f, 0.0f, 0.0f, 0.0f};
+        // La pieza 3D se registra aunque no haya camara real: asi el shader sabe esconder las caras y mostrar el respaldo plano.
+        if (const auto ground = util::SpriteGroundRegistry::get().find(getID())) {
+            ecefModel = {static_cast<float>(ground->modelFace), ground->thickness, ground->cullSign, 0.0f};
+        }
         if (ecefSprites) {
             // Tiles gruesos (z <= kEcefExactMaxZoom, es decir de mas de ~10 km de lado y por eso lejos del ojo): la afin plana por
             // tile hunde el ancla por la curvatura (un dispositivo lejos del foco desde el globo, ADR 0038); el shader ubica cada
@@ -269,6 +274,7 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
             .ecef_airborne_agl = ecefAirborneAgl,
             .ecef_exact = ecefExact,
             .ecef_ground = ecefGround,
+            .ecef_model = ecefModel,
         };
 
 #if MLN_UBO_CONSOLIDATION

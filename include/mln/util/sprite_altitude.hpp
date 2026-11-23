@@ -60,6 +60,12 @@ struct SpriteGround {
     /// Cuanto flota sobre el terreno, en pixeles de pantalla (se pasan a metros a la distancia del ancla): el chevron flota y su sombra
     /// (otra capa, con 0) queda en el piso; la separacion entre los dos se lee como volumen.
     float heightPx = 0.0f;
+    /// Pieza 3D (ADR 0106): 1..6 = la cara del chevron que dibuja esta capa (el quad pasa a ser el triangulo de esa cara); -1 = el chevron
+    /// plano de respaldo, que se ve solo SIN la camara real; 0 = un icono apoyado comun (la sombra).
+    int modelFace = 0;
+    /// Grosor del chevron (medio rombo, en fraccion del medio ancho del icono) y sentido de las caras de frente (+1 / -1; 0 = sin descartar).
+    float thickness = 0.18f;
+    float cullSign = 1.0f;
 };
 
 class SpriteGroundRegistry {

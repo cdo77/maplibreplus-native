@@ -544,11 +544,15 @@ void NativeMapView::clearSpriteAltitude(jni::JNIEnv& env, const jni::String& lay
 }
 
 void NativeMapView::setSpriteGround(
-    jni::JNIEnv& env, const jni::String& layerId, jni::jdouble bearingDeg, jni::jfloat liftDeg, jni::jfloat heightPx) {
+    jni::JNIEnv& env, const jni::String& layerId, jni::jdouble bearingDeg, jni::jfloat liftDeg, jni::jfloat heightPx,
+    jni::jint modelFace, jni::jfloat thickness, jni::jfloat cullSign) {
     mln::util::SpriteGround value;
     value.bearingDeg = bearingDeg;
     value.liftDeg = liftDeg;
     value.heightPx = heightPx;
+    value.modelFace = modelFace;
+    value.thickness = thickness;
+    value.cullSign = cullSign;
     mln::util::SpriteGroundRegistry::get().set(jni::Make<std::string>(env, layerId), value);
     map->triggerRepaint();
 }

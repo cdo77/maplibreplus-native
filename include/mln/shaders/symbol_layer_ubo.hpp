@@ -48,9 +48,11 @@ struct alignas(16) SymbolDrawableUBO {
     /* 288 */ std::array<float, 4> ecef_exact;
     // Sprite apoyado en el suelo (ADR 0106): bandera (> 0,5), rumbo en radianes, unidades de tile por metro y levante de la punta en radianes.
     /* 304 */ std::array<float, 4> ecef_ground;
-    /* 320 */
+    // Pieza 3D (ADR 0106): cara (1..6; -1 = respaldo plano solo sin camara real; 0 = nada), grosor y sentido de las caras de frente.
+    /* 320 */ std::array<float, 4> ecef_model;
+    /* 336 */
 };
-static_assert(sizeof(SymbolDrawableUBO) == 20 * 16);
+static_assert(sizeof(SymbolDrawableUBO) == 21 * 16);
 
 struct alignas(16) SymbolTilePropsUBO {
     /*  0 */ /*bool*/ int is_text;

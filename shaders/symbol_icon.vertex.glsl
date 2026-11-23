@@ -48,6 +48,7 @@ layout (std140) uniform SymbolDrawableUBO {
     highp float u_ecef_airborne_agl;
     highp vec4 u_ecef_exact;
     highp vec4 u_ecef_ground;
+    highp vec4 u_ecef_model;
 };
 
 layout (std140) uniform SymbolEvaluatedPropsUBO {
@@ -210,7 +211,16 @@ void main() {
         // perpendicular a la linea EN PANTALLA, asi se ve igual de fina mire la camara de frente o desde arriba.
         vec4 ground_clip = ecef_project(a_pos, terrain_elevation);
         vec4 air_px4 = projected_pos;
-        air_px4.y -= u_ecef_stand_px * air_px4.w; // el palito llega hasta el centro del chevron, que se para sobre su ancla
+        if (u_ecef_ground.x > 0.5) {
+            // Chevron apoyado y flotando (ADR 0106): el palito llega hasta su base, que flota (x - 1) px sobre el ancla (los mismos metros por
+            // pixel, agrandados un cuarto, que usa el chevron), no hasta un chevron parado.
+            float half_h_px_s = -1.0 / u_coord_matrix[1][1];
+            float float_m_s = (u_ecef_ground.x - 1.0) * max(projectedPoint.w, 0.0) * 0.41421356 / half_h_px_s * 1.25;
+            vec4 air_clip = ecef_project(a_pos, anchor_elevation + float_m_s);
+            air_px4 = u_label_plane_matrix * vec4(air_clip.xy / air_clip.w, 0.0, 1.0);
+        } else {
+            air_px4.y -= u_ecef_stand_px * air_px4.w; // el palito llega hasta el centro del chevron, que se para sobre su ancla
+        }
         vec4 ground_px4 = u_label_plane_matrix * vec4(ground_clip.xy / ground_clip.w, 0.0, 1.0);
         vec2 air_px = air_px4.xy / air_px4.w;
         vec2 ground_px = ground_px4.xy / ground_px4.w;
@@ -240,8 +250,9 @@ void main() {
         // Adelante y a la derecha en coordenadas de tile (x al este, y al sur).
         vec2 fwd_dir = vec2(sin(rb), -cos(rb));
         vec2 right_dir = vec2(cos(rb), sin(rb));
-        // Vista rasante: un metro adelante se ve mucho mas corto que uno de costado y la flecha se vuelve una raya. Se estira a lo largo hasta
-        // que en pantalla mida al menos la mitad de su ancho (lo mismo en los cuatro vertices: la figura no se deforma de un cuadro a otro).
+        // Vista rasante: un metro adelante se ve mucho mas corto que uno de costado y la flecha se vuelve una raya. Estirarla la deformaba (la
+        // punta se volvia una pua); en cambio se INCLINA: cuanto mas rasante la vista, mas se levanta la punta (de liftDeg a 60 grados), asi
+        // siempre se la ve como con la camara a unos 45 grados, con la tapa y el canto a la vista. Igual en los cuatro vertices.
         vec4 lp0 = u_label_plane_matrix * vec4(projectedPoint.xy / projectedPoint.w, 0.0, 1.0);
         vec4 pf = ecef_project(a_pos + fwd_dir * u_ecef_ground.z, anchor_elevation);
         vec4 pr = ecef_project(a_pos + right_dir * u_ecef_ground.z, anchor_elevation);
@@ -250,8 +261,8 @@ void main() {
         float len_f = length(lpf.xy / lpf.w - lp0.xy / lp0.w);
         float len_r = length(lpr.xy / lpr.w - lp0.xy / lp0.w);
         float squash = len_r > 0.0001 ? len_f / len_r : 1.0;
-        fwd_m *= clamp(0.5 / max(squash, 0.0001), 1.0, 4.0);
-        float lift = u_ecef_ground.w;
+        float view_elev = asin(clamp(squash, 0.0, 1.0)); // angulo aproximado entre la mirada y el suelo, visto a lo largo de la flecha
+        float lift = clamp(0.7679 - view_elev, u_ecef_ground.w, 1.0472); // asin(0,695) ~ 44 grados; tope 60
         vec2 tile_off = (fwd_dir * fwd_m * cos(lift) + right_dir * right_m) * u_ecef_ground.z;
         // Flota (px de pantalla pasados a metros) y la punta se levanta girando sobre la cola.
         float float_m = (u_ecef_ground.x - 1.0) * m_per_px;
@@ -260,6 +271,50 @@ void main() {
         vec4 corner_lp = u_label_plane_matrix * vec4(corner_clip.xy / corner_clip.w, 0.0, 1.0);
         gl_Position = u_coord_matrix * vec4(corner_lp.xy / corner_lp.w, 0.0, 1.0);
         depth_point = corner_clip;
+
+        int face = int(u_ecef_model.x + 0.5);
+        if (face >= 1) {
+            // Pieza 3D (ADR 0106): la silueta del chevron con un lomo recto de la punta a la muesca, arriba y abajo (rombo visto de atras,
+            // cuna de costado). En el marco del icono, en fracciones del medio ancho (W) y medio alto (H): punta (0, 0,9H), alas (+-0,84W,
+            // -0,88H), muesca arriba/abajo (0, -0,5H, +-t W). Esta capa dibuja UNA cara: sus tres vertices en las esquinas del quad (la cuarta
+            // repite la tercera).
+            float Wh = abs(icon_px.x);
+            float Hh = abs(icon_px.y);
+            float t = u_ecef_model.y;
+            vec3 T = vec3(0.0, 0.9, 0.0);
+            vec3 L = vec3(-0.84, -0.88, 0.0);
+            vec3 Rv = vec3(0.84, -0.88, 0.0);
+            vec3 NT = vec3(0.0, -0.5, t);
+            vec3 NB = vec3(0.0, -0.5, -t);
+            vec3 v0 = T; vec3 v1 = L; vec3 v2 = NT;                 // 1: arriba izquierda
+            if (face == 2) { v0 = T; v1 = NT; v2 = Rv; }            // 2: arriba derecha
+            else if (face == 3) { v0 = T; v1 = NB; v2 = L; }        // 3: abajo izquierda
+            else if (face == 4) { v0 = T; v1 = Rv; v2 = NB; }       // 4: abajo derecha
+            else if (face == 5) { v0 = L; v1 = NB; v2 = NT; }       // 5: pared de la muesca, ala izquierda
+            else if (face == 6) { v0 = Rv; v1 = NT; v2 = NB; }      // 6: pared de la muesca, ala derecha
+            // Que vertice le toca a esta esquina del quad: arriba-izq v0, arriba-der v1, abajo v2.
+            vec3 mv = icon_px.y < 0.0 ? (icon_px.x < 0.0 ? v0 : v1) : v2;
+            // Un vertice del modelo al espacio de recorte: derecha y adelante en metros sobre el suelo, arriba en metros sobre lo que flota.
+            float fl_m = (u_ecef_ground.x - 1.0) * m_per_px;
+            vec4 c0 = ecef_project(a_pos + (right_dir * v0.x * Wh + fwd_dir * v0.y * Hh) * m_per_px * u_ecef_ground.z,
+                                   anchor_elevation + fl_m + v0.z * Wh * m_per_px);
+            vec4 c1 = ecef_project(a_pos + (right_dir * v1.x * Wh + fwd_dir * v1.y * Hh) * m_per_px * u_ecef_ground.z,
+                                   anchor_elevation + fl_m + v1.z * Wh * m_per_px);
+            vec4 c2 = ecef_project(a_pos + (right_dir * v2.x * Wh + fwd_dir * v2.y * Hh) * m_per_px * u_ecef_ground.z,
+                                   anchor_elevation + fl_m + v2.z * Wh * m_per_px);
+            vec4 cm = ecef_project(a_pos + (right_dir * mv.x * Wh + fwd_dir * mv.y * Hh) * m_per_px * u_ecef_ground.z,
+                                   anchor_elevation + fl_m + mv.z * Wh * m_per_px);
+            vec4 l0 = u_label_plane_matrix * vec4(c0.xy / c0.w, 0.0, 1.0);
+            vec4 l1 = u_label_plane_matrix * vec4(c1.xy / c1.w, 0.0, 1.0);
+            vec4 l2 = u_label_plane_matrix * vec4(c2.xy / c2.w, 0.0, 1.0);
+            vec2 p0 = l0.xy / l0.w; vec2 p1 = l1.xy / l1.w; vec2 p2 = l2.xy / l2.w;
+            float winding = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+            // Cara de espaldas: se descarta (la pieza se ve solida sin ordenar las caras). El sentido lo fija la app (cullSign).
+            bool back = u_ecef_model.z != 0.0 && winding * u_ecef_model.z > 0.0;
+            vec4 lm = u_label_plane_matrix * vec4(cm.xy / cm.w, 0.0, 1.0);
+            gl_Position = u_coord_matrix * vec4(lm.xy / lm.w, 0.0, 1.0);
+            depth_point = back ? vec4(0.0, 0.0, 0.0, -1.0) : cm;
+        }
     }
     if (ecef_mode) {
         // Como los sprites de ATAK (BatchGeometryPoints.vert), el icono se adelanta hacia la camara su propio
@@ -268,7 +323,7 @@ void main() {
         // multiplicados por s y z = s (z - B) + B; s = 1 - radio/distancia = 1 - radio_px tan(fov/2) / (alto/2)
         // (fov 45 de la camara real, alto/2 = -1/u_coord_matrix[1][1]). Detras de la camara (w <= 0): fuera.
         // Apoyado en el suelo, adelantarlo todo su radio lo despegaria: alcanza con un cuarto para no pelearse con la malla.
-        float radius_px = stick_mode ? 0.0 : length(a_offset / 32.0 * max(a_minFontScale, fontScale)) * (ground_mode ? 0.25 : 1.0);
+        float radius_px = stick_mode ? 0.0 : length(a_offset / 32.0 * max(a_minFontScale, fontScale)) * (ground_mode ? (u_ecef_model.x > 0.5 ? 0.1 : 0.25) : 1.0);
         float half_height_px = -1.0 / u_coord_matrix[1][1];
         float s = max(1.0 - radius_px * 0.41421356 / half_height_px, 0.05);
         gl_Position.z = (depth_point.w > 0.0 && !stick_hidden)
@@ -276,6 +331,9 @@ void main() {
             : 2.0;
     }
 
+    if ((u_ecef_model.x > 0.5 && !ecef_mode) || (u_ecef_model.x < -0.5 && ecef_mode)) {
+        gl_Position = vec4(0.0, 0.0, 2.0, 1.0); // fuera del volumen: no se dibuja
+    }
     v_tex = a_tex / u_texsize;
     vec2 fade_opacity = unpack_opacity(a_fade_opacity);
     float fade_change = fade_opacity[1] > 0.5 ? u_symbol_fade_change : -u_symbol_fade_change;

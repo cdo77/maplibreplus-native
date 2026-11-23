@@ -84,7 +84,7 @@ interface NativeMap {
 
   void clearSpriteAltitude(@NonNull String layerId);
 
-  void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx);
+  void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx, int modelFace, float thickness, float cullSign);
 
   void clearSpriteGround(@NonNull String layerId);
 

@@ -360,7 +360,17 @@ public final class MapLibreMap {
    * Lo usa el marcador propio para apuntar de verdad en la perspectiva.
    */
   public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx) {
-    nativeMapView.setSpriteGround(layerId, bearingDeg, liftDeg, heightPx);
+    nativeMapView.setSpriteGround(layerId, bearingDeg, liftDeg, heightPx, 0, 0.18f, 1.0f);
+  }
+
+  /**
+   * Pieza 3D (ADR 0106): la capa dibuja la cara {@code modelFace} (1..6) del chevron 3D, con lomo arriba y abajo de grosor {@code thickness}
+   * (fraccion del medio ancho del icono); {@code cullSign} fija el sentido de las caras de frente (+1/-1; 0 = no descartar). Con
+   * {@code modelFace} = -1 la capa es el respaldo plano: se ve solo sin la camara real.
+   */
+  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx, int modelFace, float thickness,
+                              float cullSign) {
+    nativeMapView.setSpriteGround(layerId, bearingDeg, liftDeg, heightPx, modelFace, thickness, cullSign);
   }
 
   /** Quita el apoyo en el suelo: los sprites de la capa vuelven a pararse de frente a la camara (ADR 0038). */
