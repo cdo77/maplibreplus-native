@@ -197,7 +197,8 @@ void SymbolLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamete
                 const double n = std::pow(2.0, tileID.canonical.z);
                 const double latRad = std::atan(std::sinh(M_PI * (1.0 - 2.0 * (tileID.canonical.y + 0.5) / n)));
                 const double tileMeters = 40075016.686 * std::cos(latRad) / n;
-                ecefGround = {1.0f,
+                // La bandera lleva tambien la altura: 1 + px que flota (> 0,5 = apoyado en el suelo).
+                ecefGround = {1.0f + std::max(ground->heightPx, 0.0f),
                               static_cast<float>(ground->bearingDeg * M_PI / 180.0),
                               static_cast<float>(util::EXTENT / tileMeters),
                               static_cast<float>(ground->liftDeg * M_PI / 180.0)};

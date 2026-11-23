@@ -385,11 +385,11 @@ final class NativeMapView implements NativeMap {
   }
 
   @Override
-  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg) {
+  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx) {
     if (checkState("setSpriteGround")) {
       return;
     }
-    nativeSetSpriteGround(layerId, bearingDeg, liftDeg);
+    nativeSetSpriteGround(layerId, bearingDeg, liftDeg, heightPx);
   }
 
   @Override
@@ -1576,7 +1576,7 @@ final class NativeMapView implements NativeMap {
 
   private native void nativeClearSpriteAltitude(@NonNull String layerId);
 
-  private native void nativeSetSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg);
+  private native void nativeSetSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx);
 
   private native void nativeClearSpriteGround(@NonNull String layerId);
 

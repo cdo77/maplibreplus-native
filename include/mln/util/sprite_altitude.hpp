@@ -57,6 +57,9 @@ private:
 struct SpriteGround {
     double bearingDeg = 0.0;
     float liftDeg = 0.0f;
+    /// Cuanto flota sobre el terreno, en pixeles de pantalla (se pasan a metros a la distancia del ancla): el chevron flota y su sombra
+    /// (otra capa, con 0) queda en el piso; la separacion entre los dos se lee como volumen.
+    float heightPx = 0.0f;
 };
 
 class SpriteGroundRegistry {

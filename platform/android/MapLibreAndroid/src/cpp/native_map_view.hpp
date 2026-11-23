@@ -156,7 +156,7 @@ public:
     // Altura propia de los sprites de una capa de simbolos (ADR 0058). Ver mln::util::SpriteAltitudeRegistry.
     void setSpriteAltitude(jni::JNIEnv&, const jni::String&, jni::jdouble, jni::jfloat, jni::jboolean);
     void clearSpriteAltitude(jni::JNIEnv&, const jni::String&);
-    void setSpriteGround(jni::JNIEnv&, const jni::String&, jni::jdouble, jni::jfloat);
+    void setSpriteGround(jni::JNIEnv&, const jni::String&, jni::jdouble, jni::jfloat, jni::jfloat);
     void clearSpriteGround(jni::JNIEnv&, const jni::String&);
 
     // Capa de linea dibujada en el pase propio de la camara real (ADR 0058). Ver mln::util::EcefLineRegistry.

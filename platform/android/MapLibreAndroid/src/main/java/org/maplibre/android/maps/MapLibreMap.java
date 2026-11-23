@@ -356,10 +356,11 @@ public final class MapLibreMap {
   /**
    * Sprites apoyados en el suelo con la camara real (ADR 0106): el icono de la capa se dibuja sobre el plano del terreno, orientado con
    * {@code bearingDeg} (horario desde el norte; la capa debe rotar con el mapa con ese mismo icon-rotate) y con la punta levantada
-   * {@code liftDeg}. Mantiene su tamano en pixeles. Lo usa el marcador propio para apuntar de verdad en la perspectiva.
+   * {@code liftDeg}, flotando {@code heightPx} pixeles sobre el terreno (su sombra, otra capa, va con 0). Mantiene su tamano en pixeles.
+   * Lo usa el marcador propio para apuntar de verdad en la perspectiva.
    */
-  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg) {
-    nativeMapView.setSpriteGround(layerId, bearingDeg, liftDeg);
+  public void setSpriteGround(@NonNull String layerId, double bearingDeg, float liftDeg, float heightPx) {
+    nativeMapView.setSpriteGround(layerId, bearingDeg, liftDeg, heightPx);
   }
 
   /** Quita el apoyo en el suelo: los sprites de la capa vuelven a pararse de frente a la camara (ADR 0038). */

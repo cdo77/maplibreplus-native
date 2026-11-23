@@ -239,7 +239,8 @@ lowp float opacity = u_opacity;
         corner_px = vec2(-dn.y, dn.x) * (a_offset.x < 0.0 ? -half_w : half_w);
         projected_pos = vec4(top ? air_px : ground_px, 0.0, 1.0);
         depth_point = top ? projectedPoint : ground_clip;
-        stick_hidden = len < 1.0 || ground_clip.w <= 0.0;
+        // En tierra no hay palito (ADR 0106: con el chevron apoyado en el suelo, el palito parado asomaba sobre el).
+        stick_hidden = len < 1.0 || ground_clip.w <= 0.0 || anchor_elevation - terrain_elevation < 1.0;
     }
     gl_Position = u_coord_matrix * vec4(projected_pos.xy / projected_pos.w + corner_px, 0.0, 1.0);
     if (ground_mode) {
@@ -249,16 +250,29 @@ lowp float opacity = u_opacity;
         vec2 icon_px = vec2(o.x * cos(rb) + o.y * sin(rb), -o.x * sin(rb) + o.y * cos(rb));
         // Metros por pixel a la distancia del ancla (camara real de 45 grados): el icono mide en el suelo lo que mide hoy en pantalla.
         float half_h_px = -1.0 / u_coord_matrix[1][1];
-        float m_per_px = max(projectedPoint.w, 0.0) * 0.41421356 / half_h_px;
+        // En 3D se agranda un cuarto: apoyado en el piso se ve menos que parado.
+        float m_per_px = max(projectedPoint.w, 0.0) * 0.41421356 / half_h_px * 1.25;
         float fwd_m = -icon_px.y * m_per_px;
         float right_m = icon_px.x * m_per_px;
         // Adelante y a la derecha en coordenadas de tile (x al este, y al sur).
         vec2 fwd_dir = vec2(sin(rb), -cos(rb));
         vec2 right_dir = vec2(cos(rb), sin(rb));
+        // Vista rasante: un metro adelante se ve mucho mas corto que uno de costado y la flecha se vuelve una raya. Se estira a lo largo hasta
+        // que en pantalla mida al menos la mitad de su ancho (lo mismo en los cuatro vertices: la figura no se deforma de un cuadro a otro).
+        vec4 lp0 = u_label_plane_matrix * vec4(projectedPoint.xy / projectedPoint.w, 0.0, 1.0);
+        vec4 pf = ecef_project(a_pos + fwd_dir * u_ecef_ground.z, anchor_elevation);
+        vec4 pr = ecef_project(a_pos + right_dir * u_ecef_ground.z, anchor_elevation);
+        vec4 lpf = u_label_plane_matrix * vec4(pf.xy / pf.w, 0.0, 1.0);
+        vec4 lpr = u_label_plane_matrix * vec4(pr.xy / pr.w, 0.0, 1.0);
+        float len_f = length(lpf.xy / lpf.w - lp0.xy / lp0.w);
+        float len_r = length(lpr.xy / lpr.w - lp0.xy / lp0.w);
+        float squash = len_r > 0.0001 ? len_f / len_r : 1.0;
+        fwd_m *= clamp(0.5 / max(squash, 0.0001), 1.0, 4.0);
         float lift = u_ecef_ground.w;
         vec2 tile_off = (fwd_dir * fwd_m * cos(lift) + right_dir * right_m) * u_ecef_ground.z;
-        // La punta se levanta girando sobre la cola: la cola queda en el suelo.
-        float h_off = (fwd_m + abs(fwd_m)) * sin(lift);
+        // Flota (px de pantalla pasados a metros) y la punta se levanta girando sobre la cola.
+        float float_m = (u_ecef_ground.x - 1.0) * m_per_px;
+        float h_off = float_m + (fwd_m + abs(fwd_m)) * sin(lift);
         vec4 corner_clip = ecef_project(a_pos + tile_off, anchor_elevation + h_off);
         vec4 corner_lp = u_label_plane_matrix * vec4(corner_clip.xy / corner_clip.w, 0.0, 1.0);
         gl_Position = u_coord_matrix * vec4(corner_lp.xy / corner_lp.w, 0.0, 1.0);
